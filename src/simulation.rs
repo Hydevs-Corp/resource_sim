@@ -122,7 +122,7 @@ pub struct Simulation {
     pub collected_crystals: u32,
     pub collected_meat: u32,
     pub collected_metal: u32,
-    pub _sender: Sender<Message>,
+    pub sender: Sender<Message>,
     pub cheat_mode: bool,
     pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
     pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
@@ -413,7 +413,7 @@ impl Simulation {
             collected_crystals: 0,
             collected_meat: 0,
             collected_metal: 0,
-            _sender: sender,
+            sender,
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
@@ -1444,7 +1444,7 @@ impl Simulation {
                         ty,
                     });
                 }
-                
+
                 Message::AttackBase(damage) => {
                     self.base_hp = self.base_hp.saturating_sub(damage as i32);
                     self.fear_factor = self.fear_factor + 10.0;
