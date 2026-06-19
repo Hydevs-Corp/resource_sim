@@ -46,6 +46,38 @@ pub struct RobotState {
     pub hp: i32,
 }
 
+
+pub const METEORITE_ANIM_FRAMES: u8 = 8;
+
+#[derive(Clone, Copy)]
+pub struct MeteoriteAnim {
+    pub x: usize,
+    pub y: usize,
+    pub frame: u8,
+    ticks_since_advance: u8,
+    pub center_x: usize,
+    pub center_y: usize,
+}
+
+const METEORITE_TICKS_PER_FRAME: u8 = 3;
+const METEORITE_IMPACT_RADIUS: usize = 2;
+
+const METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT: u8 = 35; // 35% by default
+const METEORITE_RESOURCE_BASE_MIN: u32 = 20;
+const METEORITE_RESOURCE_BASE_MAX: u32 = 100;
+
+#[derive(Clone, Copy)]
+pub struct MeteoriteFlight {
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub tx: usize,
+    pub ty: usize,
+}
+
+ 
+
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
@@ -56,6 +88,8 @@ pub enum Message {
     AttackRobot(usize, i32),
     AttackEnemy(usize, i32),
     AttackBase(u32),
+    MeteoriteImpact(usize, usize),
+    MeteoriteIncoming(usize, usize, usize, usize),
 }
 
 pub struct Simulation {
@@ -71,6 +105,8 @@ pub struct Simulation {
     pub collected_metal: u32,
     pub sender: Sender<Message>,
     pub cheat_mode: bool,
+    pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
+    pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -166,6 +202,8 @@ impl Simulation {
         let (sender, receiver) = mpsc::channel();
         let robots = Arc::new(RwLock::new(Vec::new()));
         let enemies = Arc::new(RwLock::new(Vec::new()));
+        let meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>> = Arc::new(RwLock::new(Vec::new()));
+        let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> = Arc::new(RwLock::new(Vec::new()));
 
         for i in 0..5 {
             let r_type = if i < 2 {
@@ -264,6 +302,21 @@ impl Simulation {
             }
         });
 
+        let sender_meteorite = sender.clone();
+        let width_meteorite = width;
+        let height_meteorite = height;
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            loop {
+                thread::sleep(Duration::from_secs(rng.random_range(10..30)));
+                let tx = rng.random_range(0..width_meteorite);
+                let ty = rng.random_range(0..height_meteorite);
+                let sx = rng.random_range(0..width_meteorite);
+                let sy = 0usize;
+                let _ = sender_meteorite.send(Message::MeteoriteIncoming(sx, sy, tx, ty));
+            }
+        });
+
         Simulation {
             width,
             height,
@@ -280,6 +333,8 @@ impl Simulation {
             _claimed_resources: claimed_resources,
             cheat_mode: false,
             fear_factor: 0.5,
+            meteorite_anims,
+            meteorite_flights,
         }
     }
 
@@ -372,7 +427,6 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_millis(200));
 
-                // 1) find nearest enemy within radius 10 (own zone)
                 let own_target = {
                     let en = enemies.read().unwrap();
                     en.iter()
@@ -404,7 +458,6 @@ impl Simulation {
                     continue;
                 }
 
-                // 2) find enemies that are within 10 of ANY other unit (priority 2)
                 let other_target = {
                     let en = enemies.read().unwrap();
                     let robs = robots.read().unwrap();
@@ -439,7 +492,6 @@ impl Simulation {
                     continue;
                 }
 
-                // 3) no targets -> return to base
                 let base = (width / 2, height / 2);
                 if (x, y) != base {
                     let map_r = map.read().unwrap();
@@ -449,7 +501,6 @@ impl Simulation {
                         let _ = sender.send(Message::Moved(id, x, y));
                     }
                 } else {
-                    // at base, short sleep/patrol
                     thread::sleep(Duration::from_millis(rng.random_range(100..300)));
                 }
             }
@@ -738,7 +789,6 @@ impl Simulation {
     }
 
     pub fn create_random_crystals(&mut self, count: usize) {
-        // Create the specified number of random crystals
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
         for _ in 0..count {
@@ -764,6 +814,136 @@ impl Simulation {
     }
 
     pub fn update(&mut self) {
+        {
+            let mut flights = self.meteorite_flights.write().unwrap();
+            let mut arrived: Vec<(usize, usize)> = Vec::new();
+            for f in flights.iter_mut() {
+                f.x += f.vx;
+                f.y += f.vy;
+                let dx = f.x - f.tx as f32;
+                let dy = f.y - f.ty as f32;
+                if (dx * dx + dy * dy) <= 0.5 {
+                    arrived.push((f.tx, f.ty));
+                }
+            }
+            flights.retain(|f| {
+                let dx = f.x - f.tx as f32;
+                let dy = f.y - f.ty as f32;
+                (dx * dx + dy * dy) > 0.5
+            });
+            drop(flights);
+            if !arrived.is_empty() {
+                let mut to_place: Vec<(usize, usize, usize, usize)> = Vec::new();
+                {
+                    let mut anims = self.meteorite_anims.write().unwrap();
+                    let map_r = self.map.read().unwrap();
+                    for (cx, cy) in arrived.iter() {
+                        for dy in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                            for dx in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                                let nx_i = *cx as isize + dx;
+                                let ny_i = *cy as isize + dy;
+                                if nx_i < 0 || ny_i < 0 {
+                                    continue;
+                                }
+                                let nx = nx_i as usize;
+                                let ny = ny_i as usize;
+                                if nx >= self.width || ny >= self.height {
+                                    continue;
+                                }
+                                let ddx = dx as isize as f32;
+                                let ddy = dy as isize as f32;
+                                if (ddx * ddx + ddy * ddy) > (METEORITE_IMPACT_RADIUS as f32).powf(2.0) {
+                                    continue;
+                                }
+                                if anims.iter().any(|a| a.x == nx && a.y == ny) {
+                                    continue;
+                                }
+                                let dist = (dx.abs() as usize).max(dy.abs() as usize);
+                                let ticks_offset = dist as u8;
+                                anims.push(MeteoriteAnim {
+                                    x: nx,
+                                    y: ny,
+                                    frame: 0,
+                                    ticks_since_advance: ticks_offset,
+                                    center_x: *cx,
+                                    center_y: *cy,
+                                });
+                                if map_r[ny][nx] == CellType::Empty {
+                                    to_place.push((nx, ny, *cx, *cy));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !to_place.is_empty() {
+                    let mut map_w = self.map.write().unwrap();
+                    let mut rng = rand::rng();
+                    for (nx, ny, cx, cy) in to_place {
+                        if map_w[ny][nx] == CellType::Empty {
+                            // spawn only with a certain probability to reduce total resources
+                            if rng.random_range(0..100) as u8 >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT {
+                                continue;
+                            }
+                            let dx = (nx as isize - cx as isize).abs() as f32;
+                            let dy = (ny as isize - cy as isize).abs() as f32;
+                            let eu = (dx * dx + dy * dy).sqrt();
+                            let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
+                            let resource_type = rng.random_range(0..4);
+                            let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
+                            let amount = base_amount.saturating_mul(multiplier as u32);
+                            map_w[ny][nx] = match resource_type {
+                                0 => CellType::Crystal(amount),
+                                1 => CellType::Energy(amount),
+                                2 => CellType::Metal(amount),
+                                _ => CellType::Meat(amount),
+                            };
+                        }
+                    }
+                }
+            }
+
+            let mut anims = self.meteorite_anims.write().unwrap();
+            let mut finished: Vec<(usize, usize, usize, usize)> = Vec::new();
+            for anim in anims.iter_mut() {
+                anim.ticks_since_advance += 1;
+                if anim.ticks_since_advance >= METEORITE_TICKS_PER_FRAME {
+                    anim.ticks_since_advance = 0;
+                    if anim.frame + 1 >= METEORITE_ANIM_FRAMES {
+                        finished.push((anim.x, anim.y, anim.center_x, anim.center_y));
+                    } else {
+                        anim.frame += 1;
+                    }
+                }
+            }
+            anims.retain(|a| a.frame + 1 < METEORITE_ANIM_FRAMES);
+
+            if !finished.is_empty() {
+                let mut map_w = self.map.write().unwrap();
+                let mut rng = rand::rng();
+                for (x, y, cx, cy) in finished {
+                    if map_w[y][x] == CellType::Empty {
+                        // spawn with limited probability
+                        if rng.random_range(0..100) as u8 >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT {
+                            continue;
+                        }
+                        let dx = (x as isize - cx as isize).abs() as f32;
+                        let dy = (y as isize - cy as isize).abs() as f32;
+                        let eu = (dx * dx + dy * dy).sqrt();
+                        let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
+                        let resource_type = rng.random_range(0..4);
+                        let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
+                        let amount = base_amount.saturating_mul(multiplier as u32);
+                        map_w[y][x] = match resource_type {
+                            0 => CellType::Crystal(amount),
+                            1 => CellType::Energy(amount),
+                            2 => CellType::Metal(amount),
+                            _ => CellType::Meat(amount),
+                        };
+                    }
+                }
+            }
+        }
+
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
                 Message::Moved(id, x, y) => {
@@ -834,6 +1014,54 @@ impl Simulation {
                         }
                     }
                     robs.retain(|r| r.hp > 0);
+                }
+                Message::MeteoriteIncoming(sx, sy, tx, ty) => {
+                    let mut flights = self.meteorite_flights.write().unwrap();
+                    let dx = tx as f32 - sx as f32;
+                    let dy = ty as f32 - sy as f32;
+                    let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let mut rng = rand::rng();
+                    let speed = rng.random_range(5..15) as f32 / 10.0;
+                    let vx = dx / dist * speed;
+                    let vy = dy / dist * speed;
+                    flights.push(MeteoriteFlight {
+                        x: sx as f32,
+                        y: sy as f32,
+                        vx,
+                        vy,
+                        tx,
+                        ty,
+                    });
+                }
+                Message::MeteoriteImpact(x, y) => {
+                    let mut anims = self.meteorite_anims.write().unwrap();
+                    for dy in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                        for dx in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                            let nx_i = x as isize + dx;
+                            let ny_i = y as isize + dy;
+                            if nx_i < 0 || ny_i < 0 {
+                                continue;
+                            }
+                            let nx = nx_i as usize;
+                            let ny = ny_i as usize;
+                            if nx >= self.width || ny >= self.height {
+                                continue;
+                            }
+                            if anims.iter().any(|a| a.x == nx && a.y == ny) {
+                                continue;
+                            }
+                            let dist = (dx.abs() as usize).max(dy.abs() as usize);
+                            let ticks_offset = dist as u8;
+                            anims.push(MeteoriteAnim {
+                                x: nx,
+                                y: ny,
+                                frame: 0,
+                                ticks_since_advance: ticks_offset,
+                                center_x: x,
+                                center_y: y,
+                            });
+                        }
+                    }
                 }
                 Message::AttackBase(damage) => {
                     self.base_hp = self.base_hp.saturating_sub(damage as i32);
