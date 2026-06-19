@@ -1,6 +1,9 @@
 use noise::{NoiseFn, Perlin};
 use rand::RngExt;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -46,6 +49,26 @@ pub struct RobotState {
     pub hp: i32,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct FontConfig {
+    // On remplace les Vec par des HashMap
+    pub robots: HashMap<String, FontItem>,
+    pub cells: HashMap<String, FontItem>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct FontItem {
+    pub character: String,
+    pub color: String,
+}
+
+pub static DEFAULT_FONT: LazyLock<FontConfig> =
+    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/default.json")).unwrap());
+pub static NERD_FONT: LazyLock<FontConfig> =
+    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/nerdfont.json")).unwrap());
+
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
@@ -71,6 +94,7 @@ pub struct Simulation {
     pub collected_metal: u32,
     pub sender: Sender<Message>,
     pub cheat_mode: bool,
+    pub selected_font: &'static FontConfig,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -279,6 +303,7 @@ impl Simulation {
             known_resources,
             _claimed_resources: claimed_resources,
             cheat_mode: false,
+            selected_font: &DEFAULT_FONT,
             fear_factor: 0.5,
         }
     }

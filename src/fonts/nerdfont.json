@@ -1,0 +1,46 @@
+{
+    "robots": {
+        "Scout": {
+            "character": "",
+            "color": "Red"
+        },
+        "Collector": {
+            "character": "c",
+            "color": "LightMagenta"
+        },
+        "Army": {
+            "character": "A",
+            "color": "LightYellow"
+        }
+    },
+    "cells": {
+        "Empty": {
+            "character": " ",
+            "color": "Reset"
+        },
+        "Obstacle": {
+            "character": "O",
+            "color": "LightCyan"
+        },
+        "Energy": {
+            "character": "󱐋",
+            "color": "Yellow"
+        },
+        "Crystal": {
+            "character": "",
+            "color": "LightMagenta"
+        },
+        "Metal": {
+            "character": "󱉏",
+            "color": "LightBlue"
+        },
+        "Meat": {
+            "character": "",
+            "color": "Rgb(150, 75, 0)"
+        },
+        "Base": {
+            "character": "󰄚",
+            "color": "Yellow"
+        }
+    }
+}

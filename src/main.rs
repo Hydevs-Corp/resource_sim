@@ -153,6 +153,13 @@ fn run_app(
                             scroll_y = scroll_y.saturating_add(1)
                         }
                     }
+                    // f1 for default font, f2 for nerd font
+                    crossterm::event::KeyCode::F(1) => {
+                        sim.selected_font = &simulation::DEFAULT_FONT;
+                    }
+                    crossterm::event::KeyCode::F(2) => {
+                        sim.selected_font = &simulation::NERD_FONT;
+                    }
                     _ => {}
                 }
             }

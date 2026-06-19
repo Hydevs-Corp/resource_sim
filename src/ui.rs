@@ -6,25 +6,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
-use serde::Deserialize;
-use std::sync::LazyLock;
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct FontConfig {
-    robots: Vec<FontItem>,
-    enemies: Vec<FontItem>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct FontItem {
-    character: String,
-    color: String,
-}
-
-static DEFAULT_FONT: LazyLock<FontConfig> =
-    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/default.json")).unwrap());
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
@@ -73,19 +54,49 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                 ("V", Color::LightRed)
             } else if let Some(robot) = robot_here {
                 match robot.r_type {
-                    RobotType::Scout => ("s", Color::Red),
-                    RobotType::Collector => ("c", Color::LightMagenta),
-                    RobotType::Army => ("A", Color::LightYellow),
+                    RobotType::Scout => (
+                        sim.selected_font.robots["Scout"].character.as_str(),
+                        Color::Red,
+                    ),
+                    RobotType::Collector => (
+                        sim.selected_font.robots["Collector"].character.as_str(),
+                        Color::LightMagenta,
+                    ),
+                    RobotType::Army => (
+                        sim.selected_font.robots["Army"].character.as_str(),
+                        Color::LightYellow,
+                    ),
                 }
             } else {
                 match map[y][x] {
-                    CellType::Empty => (" ", Color::Reset),
-                    CellType::Obstacle => ("O", Color::LightCyan),
-                    CellType::Energy(_) => ("Y", Color::Yellow),
-                    CellType::Crystal(_) => ("v", Color::LightMagenta),
-                    CellType::Metal(_) => ("♦", Color::LightBlue),
-                    CellType::Meat(_) => ("m", Color::Rgb(150, 75, 0)),
-                    CellType::Base => ("H", Color::Yellow),
+                    CellType::Empty => (
+                        sim.selected_font.cells["Empty"].character.as_str(),
+                        Color::Reset,
+                    ),
+                    CellType::Obstacle => (
+                        sim.selected_font.cells["Obstacle"].character.as_str(),
+                        Color::LightCyan,
+                    ),
+                    CellType::Energy(_) => (
+                        sim.selected_font.cells["Energy"].character.as_str(),
+                        Color::Yellow,
+                    ),
+                    CellType::Crystal(_) => (
+                        sim.selected_font.cells["Crystal"].character.as_str(),
+                        Color::LightMagenta,
+                    ),
+                    CellType::Metal(_) => (
+                        sim.selected_font.cells["Metal"].character.as_str(),
+                        Color::LightBlue,
+                    ),
+                    CellType::Meat(_) => (
+                        sim.selected_font.cells["Meat"].character.as_str(),
+                        Color::Rgb(150, 75, 0),
+                    ),
+                    CellType::Base => (
+                        sim.selected_font.cells["Base"].character.as_str(),
+                        Color::Yellow,
+                    ),
                 }
             };
             row_spans.push(Span::styled(symbol, Style::default().fg(color)));
