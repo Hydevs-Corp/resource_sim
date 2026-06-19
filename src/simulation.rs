@@ -627,6 +627,59 @@ impl Simulation {
         });
     }
 
+    fn spawn_enemy(
+        id: usize,
+        start_x: usize,
+        start_y: usize,
+        sender: Sender<Message>,
+        map: Arc<RwLock<Vec<Vec<CellType>>>>,
+        robots: Arc<RwLock<Vec<RobotState>>>,
+        width: usize,
+        height: usize,
+    ) {
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            let mut x = start_x;
+            let mut y = start_y;
+
+            loop {
+                thread::sleep(Duration::from_millis(300));
+
+                let target = {
+                    let robs = robots.read().unwrap();
+                    robs.iter()
+                        .filter(|r| {
+                            let dx = (r.x as isize - x as isize).abs() as usize;
+                            let dy = (r.y as isize - y as isize).abs() as usize;
+                            (dx * dx + dy * dy) as f64 <= 100.0
+                        })
+                        .min_by_key(|r| {
+                            ((r.x as isize - x as isize).abs() + (r.y as isize - y as isize).abs())
+                                as usize
+                        })
+                        .map(|r| (r.id, r.x, r.y))
+                };
+
+                if let Some((rid, rx, ry)) = target {
+                    if x == rx && y == ry {
+                        let _ = sender.send(Message::AttackRobot(rid, 10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) =
+                            step_towards(&map_r, (x, y), (rx, ry), width, height)
+                        {
+                            x = nx;
+                            y = ny;
+                            let _ = sender.send(Message::Moved(id, x, y));
+                        }
+                    }
+                } else {
+                    thread::sleep(Duration::from_millis(rng.random_range(100..300)));
+                }
+            }
+        });
+    }
+
     pub fn create_random_crystals(&mut self, count: usize) {
         // Create the specified number of random crystals
         let mut rng = rand::rng();
