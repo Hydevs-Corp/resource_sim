@@ -211,24 +211,25 @@ impl Simulation {
             for x in 0..width {
                 if matches!(original_map[y][x], CellType::Obstacle) {
                     let mut is_border = false;
-                    
+
                     let neighbors = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-                    
+
                     for (dx, dy) in neighbors {
                         let nx = x as isize + dx;
                         let ny = y as isize + dy;
-                        
+
                         if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
-                            if !matches!(original_map[ny as usize][nx as usize], CellType::Obstacle) {
+                            if !matches!(original_map[ny as usize][nx as usize], CellType::Obstacle)
+                            {
                                 is_border = true;
                             }
                         } else {
-                            is_border = true; 
+                            is_border = true;
                         }
                     }
 
                     if is_border && rng.random_bool(0.10) {
-                        raw_map[y][x] = CellType::Metal(rng.random_range(50..=200)); 
+                        raw_map[y][x] = CellType::Metal(rng.random_range(50..=200));
                     }
                 }
             }
@@ -618,15 +619,55 @@ impl Simulation {
                     continue;
                 }
 
-                let base = (width / 2, height / 2);
-                if (x, y) != base {
-                    let map_r = map.read().unwrap();
-                    if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                let base_x = width / 2;
+                let base_y = height / 2;
+
+                let map_r = map.read().unwrap();
+
+                let mut valid_posts = Vec::new();
+
+                let offsets = [
+                    (2, 0),
+                    (-2, 0),
+                    (0, 2),
+                    (0, -2),
+                    (2, 2),
+                    (-2, -2),
+                    (2, -2),
+                    (-2, 2),
+                ];
+
+                for (dx, dy) in offsets.iter() {
+                    let gx = base_x as i32 + *dx;
+                    let gy = base_y as i32 + *dy;
+
+                    if gx >= 0 && gx < width as i32 && gy >= 0 && gy < height as i32 {
+                        let gx = gx as usize;
+                        let gy = gy as usize;
+
+                        // C'est ici qu'on utilise ta méthode is_passable !
+                        if map_r[gy][gx].is_passable() {
+                            valid_posts.push((gx, gy));
+                        }
+                    }
+                }
+
+                let guard_post = if !valid_posts.is_empty() {
+                    valid_posts[id % valid_posts.len()]
+                } else {
+                    (base_x, base_y)
+                };
+
+                if (x, y) != guard_post {
+                    if let Some((nx, ny)) = step_towards(&map_r, (x, y), guard_post, width, height)
+                    {
+                        drop(map_r);
                         x = nx;
                         y = ny;
                         let _ = sender.send(Message::Moved(id, x, y));
                     }
                 } else {
+                    drop(map_r);
                     thread::sleep(Duration::from_millis(rng.random_range(100..300)));
                 }
             }
@@ -1098,10 +1139,7 @@ impl Simulation {
                                     .write()
                                     .unwrap()
                                     .retain(|&(rx, ry)| !(rx == x && ry == y));
-                                self._claimed_resources
-                                    .write()
-                                    .unwrap()
-                                    .remove(&(x, y));
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             }
                         }
                         CellType::Crystal(n) => {
@@ -1113,10 +1151,7 @@ impl Simulation {
                                     .write()
                                     .unwrap()
                                     .retain(|&(rx, ry)| !(rx == x && ry == y));
-                                self._claimed_resources
-                                    .write()
-                                    .unwrap()
-                                    .remove(&(x, y));
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             }
                         }
                         CellType::Metal(n) => {
@@ -1128,10 +1163,7 @@ impl Simulation {
                                     .write()
                                     .unwrap()
                                     .retain(|&(rx, ry)| !(rx == x && ry == y));
-                                self._claimed_resources
-                                    .write()
-                                    .unwrap()
-                                    .remove(&(x, y));
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             }
                         }
                         CellType::Meat(n) => {
@@ -1143,10 +1175,7 @@ impl Simulation {
                                     .write()
                                     .unwrap()
                                     .retain(|&(rx, ry)| !(rx == x && ry == y));
-                                self._claimed_resources
-                                    .write()
-                                    .unwrap()
-                                    .remove(&(x, y));
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             }
                         }
                         _ => {}
