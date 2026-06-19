@@ -1,4 +1,4 @@
-use crate::simulation::{CellType, RobotType, Simulation, METEORITE_ANIM_FRAMES};
+use crate::simulation::{CellType, RobotType, Simulation, METEORITE_ANIM_FRAMES, BASE_WALL_RADIUS};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -121,6 +121,17 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                         sim.selected_font.cells["Base"].character.as_str(),
                         Color::Yellow,
                     ),
+                    CellType::Wall(_) => (
+                        sim.selected_font.cells["Obstacle"].character.as_str(),
+                        Color::Gray,
+                    ),
+                    CellType::Door(hp) => {
+                        if hp == 0 {
+                            (sim.selected_font.cells["Empty"].character.as_str(), Color::Reset)
+                        } else {
+                            ("D", Color::LightYellow)
+                        }
+                    }
                 }
             };
             row_spans.push(Span::styled(symbol, Style::default().fg(color)));
@@ -209,6 +220,37 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         sim.fear_factor,
         meteorite_indicator
     );
+
+    // Read door HPs from the map and append to stats
+    let map_r2 = sim.map.read().unwrap();
+    let bx = sim.width / 2;
+    let by = sim.height / 2;
+    let mut door_parts = Vec::new();
+    let doors = [
+        ("N", (bx as isize, by as isize - BASE_WALL_RADIUS as isize)),
+        ("E", (bx as isize + BASE_WALL_RADIUS as isize, by as isize)),
+        ("S", (bx as isize, by as isize + BASE_WALL_RADIUS as isize)),
+        ("W", (bx as isize - BASE_WALL_RADIUS as isize, by as isize)),
+    ];
+    for (label, (dx, dy)) in doors.iter() {
+        if *dx >= 0 && *dy >= 0 && (*dx as usize) < sim.width && (*dy as usize) < sim.height {
+            match map_r2[*dy as usize][*dx as usize] {
+                CellType::Door(hp) => {
+                    if hp == 0 {
+                        door_parts.push(format!("{}: BROKEN", label));
+                    } else {
+                        door_parts.push(format!("{}: {} HP", label, hp));
+                    }
+                }
+                CellType::Wall(_) => door_parts.push(format!("{}: WALL", label)),
+                _ => door_parts.push(format!("{}: -", label)),
+            }
+        } else {
+            door_parts.push(format!("{}: ?", label));
+        }
+    }
+    let doors_info = door_parts.join(" | ");
+    let stats = format!("{} | Portes: {}", stats, doors_info);
 
     let ui_paragraph = if sim.cheat_mode {
         Paragraph::new(stats)
