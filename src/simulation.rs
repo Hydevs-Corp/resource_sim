@@ -297,6 +297,16 @@ impl Simulation {
             let mut x = start_x;
             let mut y = start_y;
 
+            let dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+            let mut dir_idx: i32 = rng.random_range(0..4);
+
+            let mut rot_dir: i32 = if rng.random_bool(0.5) { 1 } else { -1 };
+
+            let mut is_expanding = true;
+            let mut step_limit = 1;
+            let mut current_steps = 0;
+            let mut segments_done = 0;
+
             loop {
                 thread::sleep(Duration::from_millis(rng.random_range(150..350)));
 
@@ -323,28 +333,91 @@ impl Simulation {
                     }
                 }
 
-                let candidates: Vec<(usize, usize)> = {
-                    let map_r = map.read().unwrap();
-                    let mut c = Vec::new();
-                    for dy in -1i32..=1 {
-                        for dx in -1i32..=1 {
-                            if dx == 0 && dy == 0 {
-                                continue;
+                let (dx, dy) = dirs[dir_idx as usize];
+                let ideal_nx = x as i32 + dx;
+                let ideal_ny = y as i32 + dy;
+
+                let hit_edge = ideal_nx < 0
+                    || ideal_nx >= width as i32
+                    || ideal_ny < 0
+                    || ideal_ny >= height as i32;
+
+                if hit_edge {
+                    is_expanding = !is_expanding;
+
+                    rot_dir = if rng.random_bool(0.5) { 1 } else { -1 };
+
+                    dir_idx = (dir_idx + rot_dir + 4) % 4;
+                    current_steps = 0;
+                    segments_done = 0;
+                } else {
+                    let mut moved_x = x;
+                    let mut moved_y = y;
+
+                    {
+                        let map_r = map.read().unwrap();
+                        if map_r[ideal_ny as usize][ideal_nx as usize].is_passable() {
+                            moved_x = ideal_nx as usize;
+                            moved_y = ideal_ny as usize;
+                        } else {
+                            let mut best_dist = i32::MAX;
+                            let mut best_pos = None;
+
+                            for test_dy in -1i32..=1 {
+                                for test_dx in -1i32..=1 {
+                                    if test_dx == 0 && test_dy == 0 {
+                                        continue;
+                                    }
+                                    let nx = x as i32 + test_dx;
+                                    let ny = y as i32 + test_dy;
+
+                                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32
+                                    {
+                                        if map_r[ny as usize][nx as usize].is_passable() {
+                                            let dist =
+                                                (nx - ideal_nx).abs() + (ny - ideal_ny).abs();
+                                            if dist < best_dist {
+                                                best_dist = dist;
+                                                best_pos = Some((nx as usize, ny as usize));
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            let nx = (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
-                            let ny = (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
-                            if map_r[ny][nx].is_passable() {
-                                c.push((nx, ny));
+
+                            if let Some((bx, by)) = best_pos {
+                                moved_x = bx;
+                                moved_y = by;
                             }
                         }
                     }
-                    c
-                };
 
-                if !candidates.is_empty() {
-                    let (nx, ny) = candidates[rng.random_range(0..candidates.len())];
-                    x = nx;
-                    y = ny;
+                    x = moved_x;
+                    y = moved_y;
+                    current_steps += 1;
+
+                    if current_steps >= step_limit {
+                        current_steps = 0;
+                        segments_done += 1;
+
+                        dir_idx = (dir_idx + rot_dir + 4) % 4;
+
+                        if segments_done >= 2 {
+                            segments_done = 0;
+                            if is_expanding {
+                                step_limit += 1;
+                            } else {
+                                step_limit -= 1;
+
+                                if step_limit <= 0 {
+                                    is_expanding = true;
+                                    step_limit = 1;
+
+                                    rot_dir = if rng.random_bool(0.5) { 1 } else { -1 };
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if sender.send(Message::Moved(id, x, y)).is_err() {
@@ -372,7 +445,6 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_millis(200));
 
-                // 1) find nearest enemy within radius 10 (own zone)
                 let own_target = {
                     let en = enemies.read().unwrap();
                     en.iter()
@@ -404,7 +476,6 @@ impl Simulation {
                     continue;
                 }
 
-                // 2) find enemies that are within 10 of ANY other unit (priority 2)
                 let other_target = {
                     let en = enemies.read().unwrap();
                     let robs = robots.read().unwrap();
@@ -439,7 +510,6 @@ impl Simulation {
                     continue;
                 }
 
-                // 3) no targets -> return to base
                 let base = (width / 2, height / 2);
                 if (x, y) != base {
                     let map_r = map.read().unwrap();
@@ -449,7 +519,6 @@ impl Simulation {
                         let _ = sender.send(Message::Moved(id, x, y));
                     }
                 } else {
-                    // at base, short sleep/patrol
                     thread::sleep(Duration::from_millis(rng.random_range(100..300)));
                 }
             }
@@ -738,7 +807,6 @@ impl Simulation {
     }
 
     pub fn create_random_crystals(&mut self, count: usize) {
-        // Create the specified number of random crystals
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
         for _ in 0..count {
@@ -751,7 +819,6 @@ impl Simulation {
     }
 
     pub fn create_random_energy(&mut self, count: usize) {
-        // Create the specified number of random energy
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
         for _ in 0..count {
