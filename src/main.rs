@@ -46,28 +46,33 @@ fn run_app(
 ) -> io::Result<()> {
     let mut scroll_x: usize = 0;
     let mut scroll_y: usize = 0;
+    let mut paused = false;
 
     loop {
         let max_scroll = max_scroll_offsets(terminal, sim)?;
         scroll_x = scroll_x.min(max_scroll.0);
         scroll_y = scroll_y.min(max_scroll.1);
 
-        sim.update();
+        if !paused {
+            sim.update();
+        }
 
         terminal.draw(|f| ui::draw(f, sim, scroll_x, scroll_y))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
                 match key_event.code {
-                    crossterm::event::KeyCode::Char('c') => sim.create_random_crystals(),
-                    crossterm::event::KeyCode::Char('e') => sim.create_random_energy(),
                     crossterm::event::KeyCode::Char('q') => return Ok(()),
+                    crossterm::event::KeyCode::Char(' ') if paused => {
+                        *sim = Simulation::new(sim.width, sim.height);
+                        paused = false;
+                    }
+                    crossterm::event::KeyCode::Char('c') if !paused => sim.create_random_crystals(),
+                    crossterm::event::KeyCode::Char('e') if !paused => sim.create_random_energy(),
                     crossterm::event::KeyCode::Char('h') => { // h to go to the base
                         scroll_x = sim.width;
                         scroll_y = sim.height;
-                        
-                    },
-
+                    }
                     // if maj is pressed, move faster
                     crossterm::event::KeyCode::Left => {
                         if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
@@ -100,6 +105,11 @@ fn run_app(
                     _ => {}
                 }
             }
+        }
+
+        // Enter paused state when energy reaches 0
+        if !paused && sim.collected_energy == 0 {
+            paused = true;
         }
     }
 }

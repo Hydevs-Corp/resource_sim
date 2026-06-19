@@ -60,7 +60,7 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                     CellType::Obstacle => ("O", Color::LightCyan),
                     CellType::Energy(_) => ("E", Color::Green),
                     CellType::Crystal(_) => ("C", Color::LightMagenta),
-                    CellType::Base => ("#", Color::LightGreen),
+                    CellType::Base => ("#", Color::Yellow),
                 }
             };
             row_spans.push(Span::styled(symbol, Style::default().fg(color)));
@@ -105,6 +105,19 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
 
         let marker = Paragraph::new("*").style(marker_style);
         f.render_widget(marker, Rect::new(marker_x, marker_y, 1, 1));
+    }
+
+    if sim.collected_energy == 0 {
+        let area = chunks[0];
+        let overlay_width = area.width.min(40);
+        let overlay_height = 3u16;
+        let overlay_x = area.x + (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = area.y + (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay = Paragraph::new("La simulation est terminée")
+            .block(Block::default().borders(Borders::ALL))
+            .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+        f.render_widget(overlay, Rect::new(overlay_x, overlay_y, overlay_width, overlay_height));
     }
 
     let stats = format!(
