@@ -53,8 +53,16 @@ fn run_app(
 
         // Gestion des événements clavier avec un timeout pour ne pas bloquer la simulation
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(_) = event::read()? {
-                return Ok(());
+            if let Event::Key(key_event) = event::read()? {
+                if key_event.code == crossterm::event::KeyCode::Char('c') {
+                    sim.create_random_crystals();
+                }
+                if key_event.code == crossterm::event::KeyCode::Char('e') {
+                    sim.create_random_energy();
+                }
+                if key_event.code == crossterm::event::KeyCode::Char('q') {
+                    return Ok(());
+                }
             }
         }
     }

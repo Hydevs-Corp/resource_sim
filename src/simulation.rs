@@ -399,6 +399,31 @@ impl Simulation {
         });
     }
 
+
+    pub fn create_random_crystals(&mut self) { // Create 5 random crystals
+        let mut rng = rand::rng();
+        let mut map_w = self.map.write().unwrap();
+        for _ in 0..5 {
+            let x = rng.random_range(0..self.width);
+            let y = rng.random_range(0..self.height);
+            if map_w[y][x] == CellType::Empty {
+                map_w[y][x] = CellType::Crystal(rng.random_range(50..=200));
+            }
+        }
+    }
+
+    pub fn create_random_energy(&mut self) { // Create 5 random energy
+        let mut rng = rand::rng();
+        let mut map_w = self.map.write().unwrap();
+        for _ in 0..5 {
+            let x = rng.random_range(0..self.width);
+            let y = rng.random_range(0..self.height);
+            if map_w[y][x] == CellType::Empty {
+                map_w[y][x] = CellType::Energy(rng.random_range(50..=200));
+            }
+        }
+    }
+
     pub fn update(&mut self) {
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
