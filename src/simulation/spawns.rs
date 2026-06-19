@@ -383,7 +383,10 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_energy += take;
-                                let _ = sender.send(Message::ResourceCollected(tx, ty, take));
+                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
+                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                    break;
+                                }
                                 claimed.write().unwrap().remove(&(tx, ty));
                                 target = None;
                                 returning = true;
@@ -407,7 +410,10 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_crystals += take;
-                                let _ = sender.send(Message::ResourceCollected(tx, ty, take));
+                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
+                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                    break;
+                                }
                                 target = None;
                                 returning = true;
                             } else {
@@ -430,7 +436,10 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_metal += take;
-                                let _ = sender.send(Message::ResourceCollected(tx, ty, take));
+                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
+                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                    break;
+                                }
                                 target = None;
                                 returning = true;
                             } else {
@@ -453,7 +462,10 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_meat += take;
-                                let _ = sender.send(Message::ResourceCollected(tx, ty, take));
+                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
+                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                    break;
+                                }
                                 target = None;
                                 returning = true;
                             } else {
@@ -515,9 +527,10 @@ pub fn spawn_collector(
                     }
                 }
 
-                if sender.send(Message::Moved(id, x, y)).is_err() {
-                    break;
-                }
+                    if sender.send(Message::Moved(id, x, y)).is_err() {
+                        eprintln!("collector {}: receiver closed while sending Moved, exiting thread", id);
+                        break;
+                    }
             }
         }
     });
