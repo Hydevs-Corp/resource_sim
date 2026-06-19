@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
@@ -68,12 +68,40 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     f.render_widget(map_paragraph, content_area);
 
     let vertical_scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-    let mut vertical_state = ScrollbarState::new(sim.height).position(scroll_y);
+    let mut vertical_state = ScrollbarState::new(sim.height)
+        .position(scroll_y)
+        .viewport_content_length(visible_height);
     f.render_stateful_widget(vertical_scrollbar, vertical_scrollbar_area, &mut vertical_state);
 
     let horizontal_scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::HorizontalBottom);
-    let mut horizontal_state = ScrollbarState::new(sim.width).position(scroll_x);
+    let mut horizontal_state = ScrollbarState::new(sim.width)
+        .position(scroll_x)
+        .viewport_content_length(visible_width);
     f.render_stateful_widget(horizontal_scrollbar, horizontal_scrollbar_area, &mut horizontal_state);
+
+    let base_x = sim.width / 2;
+    let base_y = sim.height / 2;
+    let marker_style = Style::default().fg(Color::LightGreen);
+
+    let v_track_height = vertical_scrollbar_area.height.saturating_sub(2); 
+    if v_track_height > 0 && sim.height > 0 {
+        let relative_y = (base_y * v_track_height as usize) / sim.height;
+        let marker_y = vertical_scrollbar_area.y + 1 + relative_y as u16;
+        let marker_x = vertical_scrollbar_area.x;
+
+        let marker = Paragraph::new("*").style(marker_style);
+        f.render_widget(marker, Rect::new(marker_x, marker_y, 1, 1));
+    }
+
+    let h_track_width = horizontal_scrollbar_area.width.saturating_sub(2);
+    if h_track_width > 0 && sim.width > 0 {
+        let relative_x = (base_x * h_track_width as usize) / sim.width;
+        let marker_x = horizontal_scrollbar_area.x + 1 + relative_x as u16;
+        let marker_y = horizontal_scrollbar_area.y;
+
+        let marker = Paragraph::new("*").style(marker_style);
+        f.render_widget(marker, Rect::new(marker_x, marker_y, 1, 1));
+    }
 
     let stats = format!(
         " Énergie: {} | Cristaux: {} | Flèches: déplacer | [q] Quitter ",
