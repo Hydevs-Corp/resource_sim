@@ -60,6 +60,7 @@ pub struct Simulation {
     pub map: Arc<RwLock<Vec<Vec<CellType>>>>,
     pub robots: Arc<RwLock<Vec<RobotState>>>,
     pub enemies: Vec<EnemyState>,
+    pub fear_factor: f32,
     pub collected_energy: u32,
     pub collected_crystals: u32,
     receiver: Receiver<Message>,
@@ -215,6 +216,7 @@ impl Simulation {
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
+            fear_factor: 0.5,
         }
     }
 
@@ -537,6 +539,9 @@ impl Simulation {
                 Message::Unloaded(energy, crystals) => {
                     self.collected_energy += energy;
                     self.collected_crystals += crystals;
+                    if energy > 0  {
+                        self.fear_factor = (self.fear_factor - 0.05).max(0.0);
+                    }
                 }
                 Message::EnemySpawned(id, x, y) => {
                     self.enemies.push(EnemyState { id, x, y });
@@ -551,11 +556,15 @@ impl Simulation {
                     let mut robs = self.robots.write().unwrap();
                     if let Some(robot) = robs.iter_mut().find(|r| r.id == id) {
                         robot.hp -= damage;
+                        if robot.hp <= 0 {
+                            self.fear_factor = self.fear_factor + 5.0 ;
+                        }
                     }
                     robs.retain(|r| r.hp > 0);
                 }
                 Message::AttackBase(damage) => {
                     self.collected_energy = self.collected_energy.saturating_sub(damage);
+                    self.fear_factor = self.fear_factor + 10.0 ;
                 }
             }
         }

@@ -108,8 +108,8 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     }
 
     let stats = format!(
-        " Énergie: {} | Cristaux: {} | Flèches: déplacer | [q] Quitter ",
-        sim.collected_energy, sim.collected_crystals
+        " Énergie: {} | Cristaux: {} | Flèches: déplacer | [q] Quitter | Facteur de peur: {:.2}",
+        sim.collected_energy, sim.collected_crystals, sim.fear_factor
     );
     let ui_paragraph = Paragraph::new(stats)
         .block(Block::default().borders(Borders::ALL).title("Tableau de bord"))
