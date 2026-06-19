@@ -37,7 +37,7 @@ pub struct RobotState {
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
-    ResourceCollected(usize, usize), // vide entièrement la cellule
+    ResourceCollected(usize, usize), 
     Unloaded(u32, u32),
 }
 
@@ -53,7 +53,6 @@ pub struct Simulation {
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
 }
 
-/// BFS : retourne le premier pas vers `to` depuis `from` en évitant les obstacles.
 fn step_towards(
     map: &Vec<Vec<CellType>>,
     from: (usize, usize),
@@ -197,7 +196,7 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_millis(rng.random_range(150..350)));
 
-                // Scanner les 8 voisins et signaler les ressources découvertes
+                
                 {
                     let map_r = map.read().unwrap();
                     for dy in -1i32..=1 {
@@ -216,7 +215,7 @@ impl Simulation {
                     }
                 }
 
-                // Se déplacer aléatoirement en évitant les obstacles
+                
                 let candidates: Vec<(usize, usize)> = {
                     let map_r = map.read().unwrap();
                     let mut c = Vec::new();
@@ -285,7 +284,7 @@ impl Simulation {
                         }
                     }
                 } else {
-                    // Chercher une cible non réclamée par un autre collecteur
+                    
                     if target.is_none() {
                         let found = {
                             let resources = known_resources.read().unwrap();
@@ -310,7 +309,7 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    // Collecter toutes les unités en un seul voyage
+                                    
                                     carrying_energy += n;
                                     claimed.write().unwrap().remove(&(tx, ty));
                                     let _ = sender.send(Message::ResourceCollected(tx, ty));
@@ -348,15 +347,15 @@ impl Simulation {
                                 }
                             }
                             _ => {
-                                // Ressource disparue entre-temps
+                                
                                 claimed.write().unwrap().remove(&(tx, ty));
                                 target = None;
                             }
                         }
                     } else {
-                        // Aucune ressource connue : se placer à une case de la base et attendre
+                        
                         if (x, y) == base {
-                            // Vient de décharger : quitter la base vers une case adjacente libre
+                            
                             let candidates: Vec<(usize, usize)> = {
                                 let map_r = map.read().unwrap();
                                 let mut c = Vec::new();
@@ -378,7 +377,7 @@ impl Simulation {
                                 y = ny;
                             }
                         } else {
-                            // Pas encore adjacent à la base : s'en rapprocher sans y entrer
+                            
                             let map_r = map.read().unwrap();
                             if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
                                 drop(map_r);
@@ -387,7 +386,7 @@ impl Simulation {
                                     y = ny;
                                 }
                             }
-                            // Si le prochain pas serait la base, on est déjà adjacent : rester en place
+                            
                         }
                     }
                 }
@@ -440,7 +439,7 @@ impl Simulation {
                     }
                 }
                 Message::ResourceCollected(x, y) => {
-                    // Vider entièrement la cellule (toutes les unités collectées en un coup)
+                    
                     self.map.write().unwrap()[y][x] = CellType::Empty;
                     self.known_resources.write().unwrap().retain(|&(rx, ry)| !(rx == x && ry == y));
                 }
