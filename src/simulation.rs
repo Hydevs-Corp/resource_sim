@@ -21,6 +21,8 @@ pub struct EnemyState {
 pub enum CellType {
     Empty,
     Obstacle,
+    Wall(u32),
+    Door(u32),
     Energy(u32),
     Crystal(u32),
     Metal(u32),
@@ -29,7 +31,12 @@ pub enum CellType {
 }
 impl CellType {
     fn is_passable(self) -> bool {
-        !matches!(self, CellType::Obstacle)
+        match self {
+            CellType::Obstacle => false,
+            CellType::Wall(_) => false,
+            CellType::Door(hp) => hp == 0,
+            _ => true,
+        }
     }
 }
 
@@ -63,6 +70,11 @@ pub struct MeteoriteAnim {
 
 const METEORITE_TICKS_PER_FRAME: u8 = 3;
 const METEORITE_IMPACT_RADIUS: usize = 2;
+
+pub const BASE_WALL_BUILD_THRESHOLD: u32 = 1000;
+pub const BASE_WALL_RADIUS: usize = 4;
+pub const BASE_WALL_HP: u32 = 9999; 
+pub const BASE_DOOR_HP: u32 = 60;
 
 const METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT: u8 = 35; // 35% by default
 const METEORITE_RESOURCE_BASE_MIN: u32 = 20;
@@ -109,6 +121,7 @@ pub enum Message {
     AttackEnemy(usize, i32, bool),
     AttackBase(u32),
     MeteoriteIncoming(usize, usize, usize, usize),
+    AttackDoor(usize, usize, i32),
 }
 
 pub struct Simulation {
@@ -126,6 +139,7 @@ pub struct Simulation {
     pub cheat_mode: bool,
     pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
     pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
+    pub wall_built: bool,
     pub selected_font: &'static FontConfig,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
@@ -306,7 +320,7 @@ impl Simulation {
                 r_type: RobotType::Army,
                 x: base_x,
                 y: base_y,
-                hp: 150,
+                hp: 10000,
             });
             Self::spawn_army(
                 id,
@@ -399,22 +413,22 @@ impl Simulation {
             map,
             robots,
             enemies,
+            fear_factor: 0.5,
             base_hp: 1000,
             collected_crystals: 0,
             collected_meat: 0,
             collected_metal: 0,
             _sender: sender,
+            cheat_mode: false,
+            meteorite_anims,
+            meteorite_flights,
+            wall_built: false,
+            selected_font: &DEFAULT_FONT,
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
-            cheat_mode: false,
-            selected_font: &DEFAULT_FONT,
-            fear_factor: 0.5,
-            meteorite_anims,
-            meteorite_flights,
         }
     }
-
     fn spawn_scout(
         id: usize,
         start_x: usize,
@@ -964,14 +978,53 @@ impl Simulation {
                         }
                     }
                 } else {
+                    // if wall exists, attempt to go to nearest door and attack it
                     if (x, y) == base {
                         let _ = sender.send(Message::AttackBase(10));
                     } else {
                         let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
-                            x = nx;
-                            y = ny;
-                            let _ = sender.send(Message::EnemyMoved(id, x, y));
+                        // find doors coordinates (N,E,S,W) around base
+                        let bx = base.0 as isize;
+                        let by = base.1 as isize;
+                        let doors = [
+                            (bx, by - BASE_WALL_RADIUS as isize),
+                            (bx + BASE_WALL_RADIUS as isize, by),
+                            (bx, by + BASE_WALL_RADIUS as isize),
+                            (bx - BASE_WALL_RADIUS as isize, by),
+                        ];
+                        // choose nearest door that's within bounds
+                        let mut nearest: Option<(usize, usize)> = None;
+                        let mut ndist = usize::MAX;
+                        for (dx, dy) in doors.iter() {
+                            if *dx < 0 || *dy < 0 || *dx >= width as isize || *dy >= height as isize {
+                                continue;
+                            }
+                            let (dxu, dyu) = (*dx as usize, *dy as usize);
+                            if matches!(map_r[dyu][dxu], CellType::Door(_) | CellType::Wall(_)) {
+                                let d = ((dxu as isize - x as isize).abs() + (dyu as isize - y as isize).abs()) as usize;
+                                if d < ndist {
+                                    ndist = d;
+                                    nearest = Some((dxu, dyu));
+                                }
+                            }
+                        }
+                        if let Some((tx, ty)) = nearest {
+                            if (x, y) == (tx, ty) {
+                                // attack door
+                                let _ = sender.send(Message::AttackDoor(tx, ty, 10));
+                            } else {
+                                if let Some((nx, ny)) = step_towards(&map_r, (x, y), (tx, ty), width, height) {
+                                    x = nx;
+                                    y = ny;
+                                    let _ = sender.send(Message::EnemyMoved(id, x, y));
+                                }
+                            }
+                        } else {
+                            if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                                x = nx;
+                                y = ny;
+                                let _ = sender.send(Message::EnemyMoved(id, x, y));
+                            }
                         }
                     }
                 }
@@ -1004,6 +1057,45 @@ impl Simulation {
     }
 
     pub fn update(&mut self) {
+        // Build base wall when resource threshold reached
+        if !self.wall_built {
+            let total_resources = self.collected_crystals + self.collected_metal + self.collected_meat;
+            if total_resources >= BASE_WALL_BUILD_THRESHOLD {
+                // build circular wall around base center with doors at N/E/S/W
+                let bx = self.width / 2;
+                let by = self.height / 2;
+                let mut map_w = self.map.write().unwrap();
+                for dy in -(BASE_WALL_RADIUS as isize)..=(BASE_WALL_RADIUS as isize) {
+                    for dx in -(BASE_WALL_RADIUS as isize)..=(BASE_WALL_RADIUS as isize) {
+                        let nx_i = bx as isize + dx;
+                        let ny_i = by as isize + dy;
+                        if nx_i < 0 || ny_i < 0 { continue; }
+                        let nx = nx_i as usize;
+                        let ny = ny_i as usize;
+                        if nx >= self.width || ny >= self.height { continue; }
+                        // place wall on ring (approximate circle): distance close to radius
+                        let dist = ((dx * dx + dy * dy) as f64).sqrt();
+                        if (dist - BASE_WALL_RADIUS as f64).abs() <= 0.6 {
+                            // only place walls/doors on empty cells (don't overwrite obstacles/resources/base)
+                            if map_w[ny][nx] != CellType::Empty {
+                                continue;
+                            }
+                            // check cardinal doors
+                            if (dx == 0 && dy == -(BASE_WALL_RADIUS as isize)) ||
+                               (dx == (BASE_WALL_RADIUS as isize) && dy == 0) ||
+                               (dx == 0 && dy == (BASE_WALL_RADIUS as isize)) ||
+                               (dx == -(BASE_WALL_RADIUS as isize) && dy == 0) {
+                                // All doors have equal HP
+                                map_w[ny][nx] = CellType::Door(BASE_DOOR_HP);
+                            } else {
+                                map_w[ny][nx] = CellType::Wall(BASE_WALL_HP);
+                            }
+                        }
+                    }
+                }
+                self.wall_built = true;
+            }
+        }
         {
             let mut flights = self.meteorite_flights.write().unwrap();
             let mut arrived: Vec<(usize, usize)> = Vec::new();
@@ -1286,6 +1378,13 @@ impl Simulation {
                         }
                     }
                     robs.retain(|r| r.hp > 0);
+                }
+                Message::AttackDoor(dx, dy, dmg) => {
+                    let mut map_w = self.map.write().unwrap();
+                    if let CellType::Door(hp) = map_w[dy][dx] {
+                        let nhp = hp.saturating_sub(dmg as u32);
+                        map_w[dy][dx] = CellType::Door(nhp);
+                    }
                 }
                 Message::MeteoriteIncoming(sx, sy, tx, ty) => {
                     let mut flights = self.meteorite_flights.write().unwrap();
