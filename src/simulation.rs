@@ -106,9 +106,8 @@ pub enum Message {
     EnemySpawned(usize, usize, usize),
     EnemyMoved(usize, usize, usize),
     AttackRobot(usize, i32),
-    AttackEnemy(usize, i32),
+    AttackEnemy(usize, i32, bool),
     AttackBase(u32),
-    MeteoriteImpact(usize, usize),
     MeteoriteIncoming(usize, usize, usize, usize),
 }
 
@@ -123,7 +122,7 @@ pub struct Simulation {
     pub collected_crystals: u32,
     pub collected_meat: u32,
     pub collected_metal: u32,
-    pub sender: Sender<Message>,
+    pub _sender: Sender<Message>,
     pub cheat_mode: bool,
     pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
     pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
@@ -414,7 +413,7 @@ impl Simulation {
             collected_crystals: 0,
             collected_meat: 0,
             collected_metal: 0,
-            sender,
+            _sender: sender,
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
@@ -605,7 +604,7 @@ impl Simulation {
 
                 if let Some((eid, ex, ey)) = own_target {
                     if x == ex && y == ey {
-                        let _ = sender.send(Message::AttackEnemy(eid, 10));
+                        let _ = sender.send(Message::AttackEnemy(eid, 10, true));
                     } else {
                         let map_r = map.read().unwrap();
                         if let Some((nx, ny)) =
@@ -639,7 +638,7 @@ impl Simulation {
 
                 if let Some((eid, ex, ey)) = other_target {
                     if x == ex && y == ey {
-                        let _ = sender.send(Message::AttackEnemy(eid, 10));
+                        let _ = sender.send(Message::AttackEnemy(eid, 10, true));
                     } else {
                         let map_r = map.read().unwrap();
                         if let Some((nx, ny)) =
@@ -786,7 +785,7 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_energy += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     claimed.write().unwrap().remove(&(tx, ty));
@@ -810,7 +809,7 @@ impl Simulation {
                             }
                             CellType::Crystal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_crystals += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -833,7 +832,7 @@ impl Simulation {
                             }
                             CellType::Metal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_metal += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -856,7 +855,7 @@ impl Simulation {
                             }
                             CellType::Meat(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_meat += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -1103,7 +1102,8 @@ impl Simulation {
                             } else {
                                 1
                             };
-                            let resource_type = rng.random_range(0..4);
+                            // pick among Crystal, Energy, Metal (exclude Meat)
+                            let resource_type = rng.random_range(0..3);
                             let base_amount: u32 = rng.random_range(
                                 METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX,
                             );
@@ -1154,7 +1154,8 @@ impl Simulation {
                         } else {
                             1
                         };
-                        let resource_type = rng.random_range(0..4);
+                        // pick among Crystal, Energy, Metal (exclude Meat)
+                        let resource_type = rng.random_range(0..3);
                         let base_amount: u32 = rng.random_range(
                             METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX,
                         );
@@ -1391,7 +1392,7 @@ impl Simulation {
                         enemy.y = y;
                     }
                 }
-                Message::AttackEnemy(id, damage) => {
+                Message::AttackEnemy(id, damage, killed_by_army) => {
                     let mut en = self.enemies.write().unwrap();
                     if let Some(idx) = en.iter().position(|e| e.id == id) {
                         en[idx].hp -= damage;
@@ -1399,9 +1400,17 @@ impl Simulation {
                             let ex = en[idx].x;
                             let ey = en[idx].y;
                             en.remove(idx);
+                            // spawn meat on ground in all cases
                             let mut map_w = self.map.write().unwrap();
                             if map_w[ey][ex] == CellType::Empty {
                                 map_w[ey][ex] = CellType::Meat(30);
+                                // if killed by army, inform collectors by adding to known_resources
+                                if killed_by_army {
+                                    let mut known = self.known_resources.write().unwrap();
+                                    if !known.contains(&(ex, ey)) {
+                                        known.push((ex, ey));
+                                    }
+                                }
                             }
                             self.fear_factor = (self.fear_factor - 1.0).max(0.0);
                         }
@@ -1435,40 +1444,7 @@ impl Simulation {
                         ty,
                     });
                 }
-                Message::MeteoriteImpact(x, y) => {
-                    let mut anims = self.meteorite_anims.write().unwrap();
-                    for dy in
-                        -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize)
-                    {
-                        for dx in
-                            -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize)
-                        {
-                            let nx_i = x as isize + dx;
-                            let ny_i = y as isize + dy;
-                            if nx_i < 0 || ny_i < 0 {
-                                continue;
-                            }
-                            let nx = nx_i as usize;
-                            let ny = ny_i as usize;
-                            if nx >= self.width || ny >= self.height {
-                                continue;
-                            }
-                            if anims.iter().any(|a| a.x == nx && a.y == ny) {
-                                continue;
-                            }
-                            let dist = (dx.abs() as usize).max(dy.abs() as usize);
-                            let ticks_offset = dist as u8;
-                            anims.push(MeteoriteAnim {
-                                x: nx,
-                                y: ny,
-                                frame: 0,
-                                ticks_since_advance: ticks_offset,
-                                center_x: x,
-                                center_y: y,
-                            });
-                        }
-                    }
-                }
+                
                 Message::AttackBase(damage) => {
                     self.base_hp = self.base_hp.saturating_sub(damage as i32);
                     self.fear_factor = self.fear_factor + 10.0;
