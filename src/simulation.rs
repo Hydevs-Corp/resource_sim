@@ -1013,14 +1013,15 @@ impl Simulation {
                             let dy = (ny as isize - cy as isize).abs() as f32;
                             let eu = (dx * dx + dy * dy).sqrt();
                             let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
-                            let resource_type = rng.random_range(0..4);
+                            // pick among Crystal, Energy, Metal (exclude Meat)
+                            let resource_type = rng.random_range(0..3);
                             let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
                             let amount = base_amount.saturating_mul(multiplier as u32);
                             map_w[ny][nx] = match resource_type {
                                 0 => CellType::Crystal(amount),
                                 1 => CellType::Energy(amount),
                                 2 => CellType::Metal(amount),
-                                _ => CellType::Meat(amount),
+                                _ => CellType::Crystal(amount),
                             };
                         }
                     }
@@ -1055,14 +1056,14 @@ impl Simulation {
                         let dy = (y as isize - cy as isize).abs() as f32;
                         let eu = (dx * dx + dy * dy).sqrt();
                         let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
-                        let resource_type = rng.random_range(0..4);
+                        let resource_type = rng.random_range(0..3);
                         let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
                         let amount = base_amount.saturating_mul(multiplier as u32);
                         map_w[y][x] = match resource_type {
                             0 => CellType::Crystal(amount),
                             1 => CellType::Energy(amount),
                             2 => CellType::Metal(amount),
-                            _ => CellType::Meat(amount),
+                            _ => CellType::Crystal(amount),
                         };
                     }
                 }
