@@ -73,7 +73,7 @@ const METEORITE_IMPACT_RADIUS: usize = 2;
 
 pub const BASE_WALL_BUILD_THRESHOLD: u32 = 1000;
 pub const BASE_WALL_RADIUS: usize = 4;
-pub const BASE_WALL_HP: u32 = 9999; 
+pub const BASE_WALL_HP: u32 = 9999;
 pub const BASE_DOOR_HP: u32 = 60;
 
 const METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT: u8 = 35; // 35% by default
@@ -1040,12 +1040,15 @@ impl Simulation {
                         let mut nearest: Option<(usize, usize)> = None;
                         let mut ndist = usize::MAX;
                         for (dx, dy) in doors.iter() {
-                            if *dx < 0 || *dy < 0 || *dx >= width as isize || *dy >= height as isize {
+                            if *dx < 0 || *dy < 0 || *dx >= width as isize || *dy >= height as isize
+                            {
                                 continue;
                             }
                             let (dxu, dyu) = (*dx as usize, *dy as usize);
                             if matches!(map_r[dyu][dxu], CellType::Door(_) | CellType::Wall(_)) {
-                                let d = ((dxu as isize - x as isize).abs() + (dyu as isize - y as isize).abs()) as usize;
+                                let d = ((dxu as isize - x as isize).abs()
+                                    + (dyu as isize - y as isize).abs())
+                                    as usize;
                                 if d < ndist {
                                     ndist = d;
                                     nearest = Some((dxu, dyu));
@@ -1057,14 +1060,18 @@ impl Simulation {
                                 // attack door
                                 let _ = sender.send(Message::AttackDoor(tx, ty, 10));
                             } else {
-                                if let Some((nx, ny)) = step_towards(&map_r, (x, y), (tx, ty), width, height) {
+                                if let Some((nx, ny)) =
+                                    step_towards(&map_r, (x, y), (tx, ty), width, height)
+                                {
                                     x = nx;
                                     y = ny;
                                     let _ = sender.send(Message::EnemyMoved(id, x, y));
                                 }
                             }
                         } else {
-                            if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                            if let Some((nx, ny)) =
+                                step_towards(&map_r, (x, y), base, width, height)
+                            {
                                 x = nx;
                                 y = ny;
                                 let _ = sender.send(Message::EnemyMoved(id, x, y));
@@ -1102,8 +1109,9 @@ impl Simulation {
 
     pub fn update(&mut self) {
         // Build base wall when resource threshold reached
-        if !self.wall_built {
-            let total_resources = self.collected_crystals + self.collected_metal + self.collected_meat;
+        if !self.wall_built && self.fear_factor >= 40.0 {
+            let total_resources =
+                self.collected_crystals + self.collected_metal + self.collected_meat;
             if total_resources >= BASE_WALL_BUILD_THRESHOLD {
                 // build circular wall around base center with doors at N/E/S/W
                 let bx = self.width / 2;
@@ -1113,10 +1121,14 @@ impl Simulation {
                     for dx in -(BASE_WALL_RADIUS as isize)..=(BASE_WALL_RADIUS as isize) {
                         let nx_i = bx as isize + dx;
                         let ny_i = by as isize + dy;
-                        if nx_i < 0 || ny_i < 0 { continue; }
+                        if nx_i < 0 || ny_i < 0 {
+                            continue;
+                        }
                         let nx = nx_i as usize;
                         let ny = ny_i as usize;
-                        if nx >= self.width || ny >= self.height { continue; }
+                        if nx >= self.width || ny >= self.height {
+                            continue;
+                        }
                         // place wall on ring (approximate circle): distance close to radius
                         let dist = ((dx * dx + dy * dy) as f64).sqrt();
                         if (dist - BASE_WALL_RADIUS as f64).abs() <= 0.6 {
@@ -1125,10 +1137,11 @@ impl Simulation {
                                 continue;
                             }
                             // check cardinal doors
-                            if (dx == 0 && dy == -(BASE_WALL_RADIUS as isize)) ||
-                               (dx == (BASE_WALL_RADIUS as isize) && dy == 0) ||
-                               (dx == 0 && dy == (BASE_WALL_RADIUS as isize)) ||
-                               (dx == -(BASE_WALL_RADIUS as isize) && dy == 0) {
+                            if (dx == 0 && dy == -(BASE_WALL_RADIUS as isize))
+                                || (dx == (BASE_WALL_RADIUS as isize) && dy == 0)
+                                || (dx == 0 && dy == (BASE_WALL_RADIUS as isize))
+                                || (dx == -(BASE_WALL_RADIUS as isize) && dy == 0)
+                            {
                                 // All doors have equal HP
                                 map_w[ny][nx] = CellType::Door(BASE_DOOR_HP);
                             } else {
