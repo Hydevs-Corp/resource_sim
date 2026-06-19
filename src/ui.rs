@@ -6,6 +6,25 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+use serde::Deserialize;
+use std::sync::LazyLock;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct FontConfig {
+    robots: Vec<FontItem>,
+    enemies: Vec<FontItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct FontItem {
+    character: String,
+    color: String,
+}
+
+static DEFAULT_FONT: LazyLock<FontConfig> =
+    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/default.json")).unwrap());
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
