@@ -49,13 +49,16 @@ fn run_app(
     let mut scroll_y: usize = 0;
 
     let mut last_pressed_keys: VecDeque<crossterm::event::KeyEvent> = VecDeque::with_capacity(10);
+    let mut paused = false;
 
     loop {
         let max_scroll = max_scroll_offsets(terminal, sim)?;
         scroll_x = scroll_x.min(max_scroll.0);
         scroll_y = scroll_y.min(max_scroll.1);
 
-        sim.update();
+        if !paused {
+            sim.update();
+        }
 
         terminal.draw(|f| ui::draw(f, sim, scroll_x, scroll_y))?;
 
@@ -142,6 +145,11 @@ fn run_app(
                     }
                     _ => {}
                 }
+            }
+
+            // Enter paused state when base HP reaches 0
+            if !paused && sim.base_hp <= 0 {
+                paused = true;
             }
         }
     }

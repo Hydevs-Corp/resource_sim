@@ -41,16 +41,22 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let scroll_x = scroll_x.min(max_scroll_x);
     let scroll_y = scroll_y.min(max_scroll_y);
 
+    let robots_lock = sim.robots.read().unwrap();
     let mut map_lines = Vec::new();
     for y in scroll_y..(scroll_y + visible_height).min(sim.height) {
         let mut row_spans = Vec::new();
         for x in scroll_x..(scroll_x + visible_width).min(sim.width) {
-            let robot_here = sim.robots.iter().find(|r| r.x == x && r.y == y);
+            let robot_here = robots_lock.iter().find(|r| r.x == x && r.y == y);
+            let enemies_lock = sim.enemies.read().unwrap();
+            let enemy_here = enemies_lock.iter().find(|e| e.x == x && e.y == y);
 
-            let (symbol, color) = if let Some(robot) = robot_here {
+            let (symbol, color) = if let Some(_) = enemy_here {
+                ("V", Color::LightRed)
+            } else if let Some(robot) = robot_here {
                 match robot.r_type {
                     RobotType::Scout => ("x", Color::Red),
                     RobotType::Collector => ("o", Color::LightMagenta),
+                    RobotType::Army => ("A", Color::LightYellow),
                 }
             } else {
                 match map[y][x] {
@@ -58,7 +64,9 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                     CellType::Obstacle => ("O", Color::LightCyan),
                     CellType::Energy(_) => ("E", Color::Green),
                     CellType::Crystal(_) => ("C", Color::LightMagenta),
-                    CellType::Base => ("#", Color::LightGreen),
+                    CellType::Metal(_) => ("M", Color::LightBlue),
+                    CellType::Meat(_) => ("m", Color::Rgb(150, 75, 0)),
+                    CellType::Base => ("#", Color::Yellow),
                 }
             };
             row_spans.push(Span::styled(symbol, Style::default().fg(color)));
@@ -114,9 +122,29 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         f.render_widget(marker, Rect::new(marker_x, marker_y, 1, 1));
     }
 
+    if sim.base_hp <= 0 {
+        let area = chunks[0];
+        let overlay_width = area.width.min(40);
+        let overlay_height = 3u16;
+        let overlay_x = area.x + (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = area.y + (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay = Paragraph::new("La simulation est terminée")
+            .block(Block::default().borders(Borders::ALL))
+            .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+        f.render_widget(
+            overlay,
+            Rect::new(overlay_x, overlay_y, overlay_width, overlay_height),
+        );
+    }
+
     let stats = format!(
-        " Énergie: {} | Cristaux: {} | [←↑↓→]: déplacer | [q] Quitter ",
-        sim.collected_energy, sim.collected_crystals
+        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [q] Quitter | Facteur de peur: {:.2}",
+        sim.base_hp,
+        sim.collected_crystals,
+        sim.collected_meat,
+        sim.collected_metal,
+        sim.fear_factor
     );
 
     let ui_paragraph = if sim.cheat_mode {
