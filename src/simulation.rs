@@ -1106,7 +1106,7 @@ impl Simulation {
                                 0 => CellType::Crystal(amount),
                                 1 => CellType::Energy(amount),
                                 2 => CellType::Metal(amount),
-                                _ => CellType::Meat(amount),
+                                _ => CellType::Crystal(amount),
                             };
                         }
                     }
@@ -1157,7 +1157,7 @@ impl Simulation {
                             0 => CellType::Crystal(amount),
                             1 => CellType::Energy(amount),
                             2 => CellType::Metal(amount),
-                            _ => CellType::Meat(amount),
+                            _ => CellType::Crystal(amount),
                         };
                     }
                 }
