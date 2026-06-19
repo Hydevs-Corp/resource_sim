@@ -762,12 +762,8 @@ impl Simulation {
                     }
                 } else {
                     if target.is_none() {
-                        // =========================================================
-                        // DEBUT DE LA NOUVELLE LOGIQUE DE PRIORITÉ
-                        // =========================================================
                         let fear = *shared_fear.read().unwrap();
 
-                        // Traduction de ton tableau de priorité (1 = top priorité, 3 = basse priorité)
                         let (army_p, col_p, scout_p) = if fear <= 20.0 {
                             (3, 2, 1)
                         } else if fear <= 50.0 {
@@ -811,9 +807,6 @@ impl Simulation {
                                 })
                                 .copied()
                         };
-                        // =========================================================
-                        // FIN DE LA NOUVELLE LOGIQUE
-                        // =========================================================
 
                         if let Some(t) = found {
                             claimed.write().unwrap().insert(t);
