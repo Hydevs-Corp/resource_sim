@@ -49,7 +49,6 @@ pub struct RobotState {
     pub hp: i32,
 }
 
-
 pub const METEORITE_ANIM_FRAMES: u8 = 8;
 
 #[derive(Clone, Copy)]
@@ -79,7 +78,6 @@ pub struct MeteoriteFlight {
     pub ty: usize,
 }
 
- 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct FontConfig {
@@ -256,7 +254,8 @@ impl Simulation {
         let robots = Arc::new(RwLock::new(Vec::new()));
         let enemies = Arc::new(RwLock::new(Vec::new()));
         let meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>> = Arc::new(RwLock::new(Vec::new()));
-        let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> = Arc::new(RwLock::new(Vec::new()));
+        let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> =
+            Arc::new(RwLock::new(Vec::new()));
 
         for i in 0..5 {
             let r_type = if i < 2 {
@@ -333,13 +332,43 @@ impl Simulation {
             let mut enemy_id = 0;
             loop {
                 thread::sleep(Duration::from_secs(3));
-                let edge = rng.random_range(0..4);
-                let (ex, ey) = match edge {
-                    0 => (rng.random_range(0..w), 0),
-                    1 => (rng.random_range(0..w), h - 1),
-                    2 => (0, rng.random_range(0..h)),
-                    _ => (w - 1, rng.random_range(0..h)),
+
+                // 1. On cherche tous les points de spawn valides sur les bords
+                let valid_spawns = {
+                    let map_r = map_spawner.read().unwrap();
+                    let mut spots = Vec::new();
+
+                    // Bords haut et bas
+                    for x in 0..w {
+                        if map_r[0][x].is_passable() {
+                            spots.push((x, 0));
+                        }
+                        if map_r[h - 1][x].is_passable() {
+                            spots.push((x, h - 1));
+                        }
+                    }
+
+                    // Bords gauche et droite (en évitant de recompter les coins)
+                    for y in 1..h - 1 {
+                        if map_r[y][0].is_passable() {
+                            spots.push((0, y));
+                        }
+                        if map_r[y][w - 1].is_passable() {
+                            spots.push((w - 1, y));
+                        }
+                    }
+
+                    spots
                 };
+
+                // 2. Sécurité : si la carte est complètement murée, on passe ce tour de spawn
+                if valid_spawns.is_empty() {
+                    continue;
+                }
+
+                // 3. On choisit une coordonnée aléatoire parmi la liste sécurisée
+                let (ex, ey) = valid_spawns[rng.random_range(0..valid_spawns.len())];
+
                 let _ = sender_spawner.send(Message::EnemySpawned(enemy_id, ex, ey));
                 Self::spawn_enemy(
                     enemy_id,
@@ -1004,8 +1033,12 @@ impl Simulation {
                     let mut anims = self.meteorite_anims.write().unwrap();
                     let map_r = self.map.read().unwrap();
                     for (cx, cy) in arrived.iter() {
-                        for dy in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
-                            for dx in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                        for dy in
+                            -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize)
+                        {
+                            for dx in -(METEORITE_IMPACT_RADIUS as isize)
+                                ..=(METEORITE_IMPACT_RADIUS as isize)
+                            {
                                 let nx_i = *cx as isize + dx;
                                 let ny_i = *cy as isize + dy;
                                 if nx_i < 0 || ny_i < 0 {
@@ -1018,7 +1051,9 @@ impl Simulation {
                                 }
                                 let ddx = dx as isize as f32;
                                 let ddy = dy as isize as f32;
-                                if (ddx * ddx + ddy * ddy) > (METEORITE_IMPACT_RADIUS as f32).powf(2.0) {
+                                if (ddx * ddx + ddy * ddy)
+                                    > (METEORITE_IMPACT_RADIUS as f32).powf(2.0)
+                                {
                                     continue;
                                 }
                                 if anims.iter().any(|a| a.x == nx && a.y == ny) {
@@ -1047,15 +1082,25 @@ impl Simulation {
                     for (nx, ny, cx, cy) in to_place {
                         if map_w[ny][nx] == CellType::Empty {
                             // spawn only with a certain probability to reduce total resources
-                            if rng.random_range(0..100) as u8 >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT {
+                            if rng.random_range(0..100) as u8
+                                >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT
+                            {
                                 continue;
                             }
                             let dx = (nx as isize - cx as isize).abs() as f32;
                             let dy = (ny as isize - cy as isize).abs() as f32;
                             let eu = (dx * dx + dy * dy).sqrt();
-                            let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
+                            let multiplier = if eu < 0.75 {
+                                3
+                            } else if eu < 1.75 {
+                                2
+                            } else {
+                                1
+                            };
                             let resource_type = rng.random_range(0..4);
-                            let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
+                            let base_amount: u32 = rng.random_range(
+                                METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX,
+                            );
                             let amount = base_amount.saturating_mul(multiplier as u32);
                             map_w[ny][nx] = match resource_type {
                                 0 => CellType::Crystal(amount),
@@ -1089,15 +1134,24 @@ impl Simulation {
                 for (x, y, cx, cy) in finished {
                     if map_w[y][x] == CellType::Empty {
                         // spawn with limited probability
-                        if rng.random_range(0..100) as u8 >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT {
+                        if rng.random_range(0..100) as u8 >= METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT
+                        {
                             continue;
                         }
                         let dx = (x as isize - cx as isize).abs() as f32;
                         let dy = (y as isize - cy as isize).abs() as f32;
                         let eu = (dx * dx + dy * dy).sqrt();
-                        let multiplier = if eu < 0.75 { 3 } else if eu < 1.75 { 2 } else { 1 };
+                        let multiplier = if eu < 0.75 {
+                            3
+                        } else if eu < 1.75 {
+                            2
+                        } else {
+                            1
+                        };
                         let resource_type = rng.random_range(0..4);
-                        let base_amount: u32 = rng.random_range(METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX);
+                        let base_amount: u32 = rng.random_range(
+                            METEORITE_RESOURCE_BASE_MIN..=METEORITE_RESOURCE_BASE_MAX,
+                        );
                         let amount = base_amount.saturating_mul(multiplier as u32);
                         map_w[y][x] = match resource_type {
                             0 => CellType::Crystal(amount),
@@ -1248,8 +1302,12 @@ impl Simulation {
                 }
                 Message::MeteoriteImpact(x, y) => {
                     let mut anims = self.meteorite_anims.write().unwrap();
-                    for dy in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
-                        for dx in -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize) {
+                    for dy in
+                        -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize)
+                    {
+                        for dx in
+                            -(METEORITE_IMPACT_RADIUS as isize)..=(METEORITE_IMPACT_RADIUS as isize)
+                        {
                             let nx_i = x as isize + dx;
                             let ny_i = y as isize + dy;
                             if nx_i < 0 || ny_i < 0 {
