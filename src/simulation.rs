@@ -333,12 +333,10 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_secs(3));
 
-                // 1. On cherche tous les points de spawn valides sur les bords
                 let valid_spawns = {
                     let map_r = map_spawner.read().unwrap();
                     let mut spots = Vec::new();
 
-                    // Bords haut et bas
                     for x in 0..w {
                         if map_r[0][x].is_passable() {
                             spots.push((x, 0));
@@ -348,7 +346,6 @@ impl Simulation {
                         }
                     }
 
-                    // Bords gauche et droite (en évitant de recompter les coins)
                     for y in 1..h - 1 {
                         if map_r[y][0].is_passable() {
                             spots.push((0, y));
@@ -361,12 +358,10 @@ impl Simulation {
                     spots
                 };
 
-                // 2. Sécurité : si la carte est complètement murée, on passe ce tour de spawn
                 if valid_spawns.is_empty() {
                     continue;
                 }
 
-                // 3. On choisit une coordonnée aléatoire parmi la liste sécurisée
                 let (ex, ey) = valid_spawns[rng.random_range(0..valid_spawns.len())];
 
                 let _ = sender_spawner.send(Message::EnemySpawned(enemy_id, ex, ey));
