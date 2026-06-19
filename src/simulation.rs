@@ -1108,12 +1108,10 @@ impl Simulation {
     }
 
     pub fn update(&mut self) {
-        // Build base wall when resource threshold reached
         if !self.wall_built && self.fear_factor >= 40.0 {
             let total_resources =
                 self.collected_crystals + self.collected_metal + self.collected_meat;
             if total_resources >= BASE_WALL_BUILD_THRESHOLD {
-                // build circular wall around base center with doors at N/E/S/W
                 let bx = self.width / 2;
                 let by = self.height / 2;
                 let mut map_w = self.map.write().unwrap();
@@ -1129,20 +1127,17 @@ impl Simulation {
                         if nx >= self.width || ny >= self.height {
                             continue;
                         }
-                        // place wall on ring (approximate circle): distance close to radius
+
                         let dist = ((dx * dx + dy * dy) as f64).sqrt();
                         if (dist - BASE_WALL_RADIUS as f64).abs() <= 0.6 {
-                            // only place walls/doors on empty cells (don't overwrite obstacles/resources/base)
                             if map_w[ny][nx] != CellType::Empty {
                                 continue;
                             }
-                            // check cardinal doors
                             if (dx == 0 && dy == -(BASE_WALL_RADIUS as isize))
                                 || (dx == (BASE_WALL_RADIUS as isize) && dy == 0)
                                 || (dx == 0 && dy == (BASE_WALL_RADIUS as isize))
                                 || (dx == -(BASE_WALL_RADIUS as isize) && dy == 0)
                             {
-                                // All doors have equal HP
                                 map_w[ny][nx] = CellType::Door(BASE_DOOR_HP);
                             } else {
                                 map_w[ny][nx] = CellType::Wall(BASE_WALL_HP);
