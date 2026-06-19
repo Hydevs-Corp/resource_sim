@@ -54,19 +54,19 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                 ("V", Color::LightRed)
             } else if let Some(robot) = robot_here {
                 match robot.r_type {
-                    RobotType::Scout => ("ಀ", Color::Red),
+                    RobotType::Scout => ("ǂ", Color::Red),
                     RobotType::Collector => ("०", Color::LightMagenta),
-                    RobotType::Army => ("࿈", Color::LightYellow),
+                    RobotType::Army => ("ඞ", Color::LightYellow),
                 }
             } else {
                 match map[y][x] {
                     CellType::Empty => (" ", Color::Reset),
-                    CellType::Obstacle => ("O", Color::LightCyan),
-                    CellType::Energy(_) => ("E", Color::Green),
-                    CellType::Crystal(_) => ("C", Color::LightMagenta),
-                    CellType::Metal(_) => ("M", Color::LightBlue),
-                    CellType::Meat(_) => ("m", Color::Rgb(150, 75, 0)),
-                    CellType::Base => ("#", Color::Yellow),
+                    CellType::Obstacle => ("▒", Color::LightCyan),
+                    CellType::Energy(_) => ("☇", Color::Yellow),
+                    CellType::Crystal(_) => ("▲", Color::LightMagenta),
+                    CellType::Metal(_) => ("♦", Color::LightBlue),
+                    CellType::Meat(_) => ("♨", Color::Rgb(150, 75, 0)),
+                    CellType::Base => ("⌂", Color::Yellow),
                 }
             };
             row_spans.push(Span::styled(symbol, Style::default().fg(color)));
