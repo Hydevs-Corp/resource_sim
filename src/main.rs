@@ -62,10 +62,41 @@ fn run_app(
                     crossterm::event::KeyCode::Char('c') => sim.create_random_crystals(),
                     crossterm::event::KeyCode::Char('e') => sim.create_random_energy(),
                     crossterm::event::KeyCode::Char('q') => return Ok(()),
-                    crossterm::event::KeyCode::Left => scroll_x = scroll_x.saturating_sub(1),
-                    crossterm::event::KeyCode::Right => scroll_x = scroll_x.saturating_add(1),
-                    crossterm::event::KeyCode::Up => scroll_y = scroll_y.saturating_sub(1),
-                    crossterm::event::KeyCode::Down => scroll_y = scroll_y.saturating_add(1),
+                    crossterm::event::KeyCode::Char('h') => { // h to go to the base
+                        scroll_x = sim.width;
+                        scroll_y = sim.height;
+                        
+                    },
+
+                    // if maj is pressed, move faster
+                    crossterm::event::KeyCode::Left => {
+                        if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            scroll_x = scroll_x.saturating_sub(5)
+                        } else {
+                            scroll_x = scroll_x.saturating_sub(1)
+                        }
+                    },
+                    crossterm::event::KeyCode::Right => {
+                        if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            scroll_x = scroll_x.saturating_add(5)
+                        } else {
+                            scroll_x = scroll_x.saturating_add(1)
+                        }
+                    },
+                    crossterm::event::KeyCode::Up => {
+                        if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            scroll_y = scroll_y.saturating_sub(5)
+                        } else {
+                            scroll_y = scroll_y.saturating_sub(1)
+                        }
+                    },
+                    crossterm::event::KeyCode::Down => {
+                        if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            scroll_y = scroll_y.saturating_add(5)
+                        } else {
+                            scroll_y = scroll_y.saturating_add(1)
+                        }
+                    },
                     _ => {}
                 }
             }
