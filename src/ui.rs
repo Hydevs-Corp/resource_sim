@@ -54,8 +54,8 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                 ("V", Color::LightRed)
             } else if let Some(robot) = robot_here {
                 match robot.r_type {
-                    RobotType::Scout => ("x", Color::Red),
-                    RobotType::Collector => ("o", Color::LightMagenta),
+                    RobotType::Scout => ("ಀ", Color::Red),
+                    RobotType::Collector => ("०", Color::LightMagenta),
                     RobotType::Army => ("A", Color::LightYellow),
                 }
             } else {
