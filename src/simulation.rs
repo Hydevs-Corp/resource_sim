@@ -118,6 +118,7 @@ pub struct Simulation {
     pub robots: Arc<RwLock<Vec<RobotState>>>,
     pub enemies: Arc<RwLock<Vec<EnemyState>>>,
     pub fear_factor: f32,
+    pub shared_fear: Arc<RwLock<f32>>,
     pub base_hp: i32,
     pub collected_crystals: u32,
     pub collected_meat: u32,
@@ -264,6 +265,8 @@ impl Simulation {
         let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> =
             Arc::new(RwLock::new(Vec::new()));
 
+        let shared_fear = Arc::new(RwLock::new(0.5));
+
         // 4
         for i in 0..5 {
             let r_type = if i < 2 {
@@ -300,6 +303,7 @@ impl Simulation {
                     Arc::clone(&map),
                     Arc::clone(&known_resources),
                     Arc::clone(&claimed_resources),
+                    Arc::clone(&shared_fear),
                     width,
                     height,
                 );
@@ -418,6 +422,7 @@ impl Simulation {
             known_resources,
             _claimed_resources: claimed_resources,
             cheat_mode: false,
+            shared_fear,
             selected_font: &DEFAULT_FONT,
             fear_factor: 0.5,
             meteorite_anims,
@@ -715,6 +720,7 @@ impl Simulation {
         map: Arc<RwLock<Vec<Vec<CellType>>>>,
         known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
         claimed: Arc<RwLock<HashSet<(usize, usize)>>>,
+        shared_fear: Arc<RwLock<f32>>, // <-- Ajout du paramètre ici
         width: usize,
         height: usize,
     ) {
@@ -756,13 +762,38 @@ impl Simulation {
                     }
                 } else {
                     if target.is_none() {
+                        // =========================================================
+                        // DEBUT DE LA NOUVELLE LOGIQUE DE PRIORITÉ
+                        // =========================================================
+                        let fear = *shared_fear.read().unwrap();
+
+                        // Traduction de ton tableau de priorité (1 = top priorité, 3 = basse priorité)
+                        let (army_p, col_p, scout_p) = if fear <= 20.0 {
+                            (3, 2, 1)
+                        } else if fear <= 50.0 {
+                            (2, 1, 3)
+                        } else if fear <= 70.0 {
+                            (1, 3, 2)
+                        } else {
+                            (1, 2, 3)
+                        };
+
+                        let get_prio = |cell: CellType| -> i32 {
+                            match cell {
+                                CellType::Crystal(_) => scout_p.min(col_p),
+                                CellType::Metal(_) | CellType::Meat(_) => army_p,
+                                CellType::Energy(_) => 1,
+                                _ => 99,
+                            }
+                        };
+
                         let found = {
                             let resources = known_resources.read().unwrap();
                             let map_r = map.read().unwrap();
                             let claimed_r = claimed.read().unwrap();
                             resources
                                 .iter()
-                                .find(|&&(rx, ry)| {
+                                .filter(|&&(rx, ry)| {
                                     matches!(
                                         map_r[ry][rx],
                                         CellType::Energy(_)
@@ -771,8 +802,19 @@ impl Simulation {
                                             | CellType::Meat(_)
                                     ) && !claimed_r.contains(&(rx, ry))
                                 })
+                                .min_by_key(|&&(rx, ry)| {
+                                    let cell = map_r[ry][rx];
+                                    let prio = get_prio(cell);
+                                    let dist =
+                                        (rx as i32 - x as i32).abs() + (ry as i32 - y as i32).abs();
+                                    (prio, dist)
+                                })
                                 .copied()
                         };
+                        // =========================================================
+                        // FIN DE LA NOUVELLE LOGIQUE
+                        // =========================================================
+
                         if let Some(t) = found {
                             claimed.write().unwrap().insert(t);
                             target = Some(t);
@@ -928,7 +970,6 @@ impl Simulation {
             }
         });
     }
-
     fn spawn_enemy(
         id: usize,
         start_x: usize,
@@ -1017,6 +1058,7 @@ impl Simulation {
         {
             let mut flights = self.meteorite_flights.write().unwrap();
             let mut arrived: Vec<(usize, usize)> = Vec::new();
+            *self.shared_fear.write().unwrap() = self.fear_factor;
             for f in flights.iter_mut() {
                 f.x += f.vx;
                 f.y += f.vy;
@@ -1294,6 +1336,7 @@ impl Simulation {
                     Arc::clone(&self.map),
                     Arc::clone(&self.known_resources),
                     Arc::clone(&self._claimed_resources),
+                    Arc::clone(&self.shared_fear),
                     self.width,
                     self.height,
                 );
