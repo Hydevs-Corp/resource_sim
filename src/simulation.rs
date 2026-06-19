@@ -775,7 +775,7 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_energy += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     claimed.write().unwrap().remove(&(tx, ty));
@@ -799,7 +799,7 @@ impl Simulation {
                             }
                             CellType::Crystal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_crystals += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -822,7 +822,7 @@ impl Simulation {
                             }
                             CellType::Metal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_metal += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -845,7 +845,7 @@ impl Simulation {
                             }
                             CellType::Meat(n) => {
                                 if (x, y) == (tx, ty) {
-                                    let take = (4u32).min(n);
+                                    let take = (50u32).min(n);
                                     carrying_meat += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
@@ -1261,14 +1261,16 @@ impl Simulation {
                             let ex = en[idx].x;
                             let ey = en[idx].y;
                             en.remove(idx);
-                            // if killed by army bots, credit meat directly to base stats
-                            if killed_by_army {
-                                // same amount as before spawn-on-ground
-                                self.collected_meat = self.collected_meat.saturating_add(30);
-                            } else {
-                                let mut map_w = self.map.write().unwrap();
-                                if map_w[ey][ex] == CellType::Empty {
-                                    map_w[ey][ex] = CellType::Meat(30);
+                            // spawn meat on ground in all cases
+                            let mut map_w = self.map.write().unwrap();
+                            if map_w[ey][ex] == CellType::Empty {
+                                map_w[ey][ex] = CellType::Meat(30);
+                                // if killed by army, inform collectors by adding to known_resources
+                                if killed_by_army {
+                                    let mut known = self.known_resources.write().unwrap();
+                                    if !known.contains(&(ex, ey)) {
+                                        known.push((ex, ey));
+                                    }
                                 }
                             }
                             self.fear_factor = (self.fear_factor - 1.0).max(0.0);
