@@ -779,6 +779,7 @@ impl Simulation {
                                     let take = (4u32).min(n);
                                     carrying_energy += take;
                                     let _ = sender.send(Message::ResourceCollected(tx, ty, take));
+                                    claimed.write().unwrap().remove(&(tx, ty));
                                     target = None;
                                     returning = true;
                                 } else {
