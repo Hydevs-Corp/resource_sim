@@ -95,7 +95,6 @@ fn run_app(
                     }
                 }
 
-                // --- Ton code de match habituel ---
                 match key_event.code {
                     crossterm::event::KeyCode::Char('c') => {
                         if sim.cheat_mode {

@@ -7,20 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-
-fn meteorite_frame_visual(frame: u8) -> (&'static str, Color) {
-    match frame {
-        0 => ("☄", Color::LightYellow),
-        1 => ("✺", Color::White),
-        2 => ("✸", Color::LightRed),
-        3 => ("▓", Color::Rgb(255, 140, 0)),
-        4 => ("▒", Color::Rgb(180, 90, 30)),
-        5 => ("█", Color::Rgb(200, 50, 0)),
-        6 => ("▓", Color::Rgb(120, 60, 20)),
-        7 => ("░", Color::DarkGray),
-        _ => (" ", Color::DarkGray),
-    }
-}
+use crate::ui::visuals::meteorite_frame_visual;
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
@@ -70,7 +57,6 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
             let flight_here = meteorite_flights.iter().find(|f| f.x.round() as usize == x && f.y.round() as usize == y);
 
             let (symbol, color) = if let Some(_) = flight_here {
-                // falling meteor has priority
                 ("☄", Color::LightYellow)
             } else if let Some(anim) = meteorite_here {
                 meteorite_frame_visual(anim.frame)
