@@ -49,7 +49,7 @@ pub struct RobotState {
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
-    ResourceCollected(usize, usize),
+    ResourceCollected(usize, usize, u32),
     Unloaded(u32, u32, u32, u32),
     EnemySpawned(usize, usize, usize),
     EnemyMoved(usize, usize, usize),
@@ -142,6 +142,35 @@ impl Simulation {
                     raw_map[y][x] = CellType::Energy(rng.random_range(50..=200));
                 } else if rng.random_bool(0.02) {
                     raw_map[y][x] = CellType::Crystal(rng.random_range(50..=200));
+                }
+            }
+        }
+
+        let original_map = raw_map.clone();
+
+        for y in 0..height {
+            for x in 0..width {
+                if matches!(original_map[y][x], CellType::Obstacle) {
+                    let mut is_border = false;
+                    
+                    let neighbors = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+                    
+                    for (dx, dy) in neighbors {
+                        let nx = x as isize + dx;
+                        let ny = y as isize + dy;
+                        
+                        if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
+                            if !matches!(original_map[ny as usize][nx as usize], CellType::Obstacle) {
+                                is_border = true;
+                            }
+                        } else {
+                            is_border = true; 
+                        }
+                    }
+
+                    if is_border && rng.random_bool(0.10) {
+                        raw_map[y][x] = CellType::Metal(rng.random_range(50..=200)); 
+                    }
                 }
             }
         }
@@ -603,9 +632,9 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_energy += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_energy += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -626,9 +655,9 @@ impl Simulation {
                             }
                             CellType::Crystal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_crystals += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_crystals += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -649,9 +678,9 @@ impl Simulation {
                             }
                             CellType::Metal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_metal += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_metal += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -672,9 +701,9 @@ impl Simulation {
                             }
                             CellType::Meat(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_meat += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_meat += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -847,12 +876,71 @@ impl Simulation {
                         resources.push((x, y));
                     }
                 }
-                Message::ResourceCollected(x, y) => {
-                    self.map.write().unwrap()[y][x] = CellType::Empty;
-                    self.known_resources
-                        .write()
-                        .unwrap()
-                        .retain(|&(rx, ry)| !(rx == x && ry == y));
+                Message::ResourceCollected(x, y, amount) => {
+                    let mut map_w = self.map.write().unwrap();
+                    match map_w[y][x] {
+                        CellType::Energy(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Energy(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Crystal(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Crystal(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Metal(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Metal(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Meat(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Meat(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Message::Unloaded(energy, crystals, metal, meat) => {
                     if energy > 0 {
