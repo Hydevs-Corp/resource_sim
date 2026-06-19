@@ -6,7 +6,11 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    Terminal,
+};
 use simulation::Simulation;
 use std::{error::Error, io, time::Duration};
 
@@ -17,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut sim = Simulation::new(80, 40);
+    let mut sim = Simulation::new(800, 400);
 
     let res = run_app(&mut terminal, &mut sim);
 
@@ -40,23 +44,47 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     sim: &mut Simulation,
 ) -> io::Result<()> {
+    let mut scroll_x: usize = 0;
+    let mut scroll_y: usize = 0;
+
     loop {
+        let max_scroll = max_scroll_offsets(terminal, sim)?;
+        scroll_x = scroll_x.min(max_scroll.0);
+        scroll_y = scroll_y.min(max_scroll.1);
+
         sim.update();
 
-        terminal.draw(|f| ui::draw(f, sim))?;
+        terminal.draw(|f| ui::draw(f, sim, scroll_x, scroll_y))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
-                if key_event.code == crossterm::event::KeyCode::Char('c') {
-                    sim.create_random_crystals();
-                }
-                if key_event.code == crossterm::event::KeyCode::Char('e') {
-                    sim.create_random_energy();
-                }
-                if key_event.code == crossterm::event::KeyCode::Char('q') {
-                    return Ok(());
+                match key_event.code {
+                    crossterm::event::KeyCode::Char('c') => sim.create_random_crystals(),
+                    crossterm::event::KeyCode::Char('e') => sim.create_random_energy(),
+                    crossterm::event::KeyCode::Char('q') => return Ok(()),
+                    crossterm::event::KeyCode::Left => scroll_x = scroll_x.saturating_sub(1),
+                    crossterm::event::KeyCode::Right => scroll_x = scroll_x.saturating_add(1),
+                    crossterm::event::KeyCode::Up => scroll_y = scroll_y.saturating_sub(1),
+                    crossterm::event::KeyCode::Down => scroll_y = scroll_y.saturating_add(1),
+                    _ => {}
                 }
             }
         }
     }
+}
+
+fn max_scroll_offsets(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    sim: &Simulation,
+) -> io::Result<(usize, usize)> {
+    let area = terminal.size()?;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .split(area.into());
+
+    let map_width = chunks[0].width.saturating_sub(2) as usize;
+    let map_height = chunks[0].height.saturating_sub(2) as usize;
+
+    Ok((sim.width.saturating_sub(map_width), sim.height.saturating_sub(map_height)))
 }
