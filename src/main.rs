@@ -143,6 +143,16 @@ fn run_app(
                             scroll_y = scroll_y.saturating_sub(1)
                         }
                     }
+                    crossterm::event::KeyCode::Down => {
+                        if key_event
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::SHIFT)
+                        {
+                            scroll_y = scroll_y.saturating_add(5)
+                        } else {
+                            scroll_y = scroll_y.saturating_add(1)
+                        }
+                    }
                     _ => {}
                 }
             }
