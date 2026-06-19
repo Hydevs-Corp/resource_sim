@@ -39,13 +39,17 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let scroll_x = scroll_x.min(max_scroll_x);
     let scroll_y = scroll_y.min(max_scroll_y);
 
+    let robots_lock = sim.robots.read().unwrap();
     let mut map_lines = Vec::new();
     for y in scroll_y..(scroll_y + visible_height).min(sim.height) {
         let mut row_spans = Vec::new();
         for x in scroll_x..(scroll_x + visible_width).min(sim.width) {
-            let robot_here = sim.robots.iter().find(|r| r.x == x && r.y == y);
+            let robot_here = robots_lock.iter().find(|r| r.x == x && r.y == y);
+            let enemy_here = sim.enemies.iter().find(|e| e.x == x && e.y == y);
 
-            let (symbol, color) = if let Some(robot) = robot_here {
+            let (symbol, color) = if let Some(_) = enemy_here {
+                ("V", Color::LightRed)
+            } else if let Some(robot) = robot_here {
                 match robot.r_type {
                     RobotType::Scout => ("x", Color::Red),
                     RobotType::Collector => ("o", Color::Magenta),

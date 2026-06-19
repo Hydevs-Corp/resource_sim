@@ -6,6 +6,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+#[derive(Clone, Copy, PartialEq)]
+pub struct EnemyState {
+    pub id: usize,
+    pub x: usize,
+    pub y: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum CellType {
     Empty,
@@ -27,11 +34,13 @@ pub enum RobotType {
     Collector,
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub struct RobotState {
     pub id: usize,
     pub r_type: RobotType,
     pub x: usize,
     pub y: usize,
+    pub hp: i32,
 }
 
 pub enum Message {
@@ -39,13 +48,18 @@ pub enum Message {
     ResourceFound(usize, usize),
     ResourceCollected(usize, usize), 
     Unloaded(u32, u32),
+    EnemySpawned(usize, usize, usize),
+    EnemyMoved(usize, usize, usize),
+    AttackRobot(usize, i32),
+    AttackBase(u32),
 }
 
 pub struct Simulation {
     pub width: usize,
     pub height: usize,
     pub map: Arc<RwLock<Vec<Vec<CellType>>>>,
-    pub robots: Vec<RobotState>,
+    pub robots: Arc<RwLock<Vec<RobotState>>>,
+    pub enemies: Vec<EnemyState>,
     pub collected_energy: u32,
     pub collected_crystals: u32,
     receiver: Receiver<Message>,
@@ -142,7 +156,7 @@ impl Simulation {
         let claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>> =
             Arc::new(RwLock::new(HashSet::new()));
         let (sender, receiver) = mpsc::channel();
-        let mut robots = Vec::new();
+        let robots = Arc::new(RwLock::new(Vec::new()));
 
         for i in 0..5 {
             let r_type = if i < 2 {
@@ -150,7 +164,8 @@ impl Simulation {
             } else {
                 RobotType::Collector
             };
-            robots.push(RobotState { id: i, r_type, x: base_x, y: base_y });
+            let hp = if r_type == RobotType::Scout { 50 } else { 100 };
+            robots.write().unwrap().push(RobotState { id: i, r_type, x: base_x, y: base_y, hp });
 
             let sender_clone = sender.clone();
             if r_type == RobotType::Scout {
@@ -169,9 +184,33 @@ impl Simulation {
             }
         }
 
+        let sender_spawner = sender.clone();
+        let map_spawner = Arc::clone(&map);
+        let robots_spawner = Arc::clone(&robots);
+        let w = width;
+        let h = height;
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            let mut enemy_id = 0;
+            loop {
+                thread::sleep(Duration::from_secs(3));
+                let edge = rng.random_range(0..4);
+                let (ex, ey) = match edge {
+                    0 => (rng.random_range(0..w), 0),
+                    1 => (rng.random_range(0..w), h - 1),
+                    2 => (0, rng.random_range(0..h)),
+                    _ => (w - 1, rng.random_range(0..h)),
+                };
+                let _ = sender_spawner.send(Message::EnemySpawned(enemy_id, ex, ey));
+                Self::spawn_enemy(enemy_id, ex, ey, sender_spawner.clone(), Arc::clone(&map_spawner), Arc::clone(&robots_spawner), w, h);
+                enemy_id += 1;
+            }
+        });
+
         Simulation {
             width, height, map, robots,
-            collected_energy: 0,
+            enemies: Vec::new(),
+            collected_energy: 100,
             collected_crystals: 0,
             receiver,
             known_resources,
@@ -398,6 +437,59 @@ impl Simulation {
         });
     }
 
+    fn spawn_enemy(
+        id: usize,
+        start_x: usize,
+        start_y: usize,
+        sender: Sender<Message>,
+        map: Arc<RwLock<Vec<Vec<CellType>>>>,
+        robots: Arc<RwLock<Vec<RobotState>>>,
+        width: usize,
+        height: usize,
+    ) {
+        thread::spawn(move || {
+            let mut x = start_x;
+            let mut y = start_y;
+            let base = (width / 2, height / 2);
+            loop {
+                thread::sleep(Duration::from_millis(300));
+                let mut target = None;
+                let mut min_dist = 11.0;
+                {
+                    let robs = robots.read().unwrap();
+                    for r in robs.iter() {
+                        let dist = (((r.x as isize - x as isize).pow(2) + (r.y as isize - y as isize).pow(2)) as f64).sqrt();
+                        if dist <= 10.0 && dist < min_dist {
+                            min_dist = dist;
+                            target = Some((r.id, r.x, r.y));
+                        }
+                    }
+                }
+                if let Some((r_id, rx, ry)) = target {
+                    if x == rx && y == ry {
+                        let _ = sender.send(Message::AttackRobot(r_id, 10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (rx, ry), width, height) {
+                            x = nx; y = ny;
+                            let _ = sender.send(Message::EnemyMoved(id, x, y));
+                        }
+                    }
+                } else {
+                    if (x, y) == base {
+                        let _ = sender.send(Message::AttackBase(10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                            x = nx; y = ny;
+                            let _ = sender.send(Message::EnemyMoved(id, x, y));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
 
     pub fn create_random_crystals(&mut self) { // Create 5 random crystals
         let mut rng = rand::rng();
@@ -427,7 +519,7 @@ impl Simulation {
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
                 Message::Moved(id, x, y) => {
-                    if let Some(robot) = self.robots.iter_mut().find(|r| r.id == id) {
+                    if let Some(robot) = self.robots.write().unwrap().iter_mut().find(|r| r.id == id) {
                         robot.x = x;
                         robot.y = y;
                     }
@@ -439,13 +531,31 @@ impl Simulation {
                     }
                 }
                 Message::ResourceCollected(x, y) => {
-                    
                     self.map.write().unwrap()[y][x] = CellType::Empty;
                     self.known_resources.write().unwrap().retain(|&(rx, ry)| !(rx == x && ry == y));
                 }
                 Message::Unloaded(energy, crystals) => {
                     self.collected_energy += energy;
                     self.collected_crystals += crystals;
+                }
+                Message::EnemySpawned(id, x, y) => {
+                    self.enemies.push(EnemyState { id, x, y });
+                }
+                Message::EnemyMoved(id, x, y) => {
+                    if let Some(enemy) = self.enemies.iter_mut().find(|e| e.id == id) {
+                        enemy.x = x;
+                        enemy.y = y;
+                    }
+                }
+                Message::AttackRobot(id, damage) => {
+                    let mut robs = self.robots.write().unwrap();
+                    if let Some(robot) = robs.iter_mut().find(|r| r.id == id) {
+                        robot.hp -= damage;
+                    }
+                    robs.retain(|r| r.hp > 0);
+                }
+                Message::AttackBase(damage) => {
+                    self.collected_energy = self.collected_energy.saturating_sub(damage);
                 }
             }
         }
