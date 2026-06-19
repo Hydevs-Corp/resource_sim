@@ -1,6 +1,9 @@
 use noise::{NoiseFn, Perlin};
 use rand::RngExt;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -77,11 +80,30 @@ pub struct MeteoriteFlight {
 }
 
  
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct FontConfig {
+    // On remplace les Vec par des HashMap
+    pub robots: HashMap<String, FontItem>,
+    pub cells: HashMap<String, FontItem>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct FontItem {
+    pub character: String,
+    pub color: String,
+}
+
+pub static DEFAULT_FONT: LazyLock<FontConfig> =
+    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/default.json")).unwrap());
+pub static NERD_FONT: LazyLock<FontConfig> =
+    LazyLock::new(|| serde_json::from_str(include_str!("./fonts/nerdfont.json")).unwrap());
 
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
-    ResourceCollected(usize, usize),
+    ResourceCollected(usize, usize, u32),
     Unloaded(u32, u32, u32, u32),
     EnemySpawned(usize, usize, usize),
     EnemyMoved(usize, usize, usize),
@@ -107,6 +129,7 @@ pub struct Simulation {
     pub cheat_mode: bool,
     pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
     pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
+    pub selected_font: &'static FontConfig,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -178,6 +201,35 @@ impl Simulation {
                     raw_map[y][x] = CellType::Energy(rng.random_range(50..=200));
                 } else if rng.random_bool(0.02) {
                     raw_map[y][x] = CellType::Crystal(rng.random_range(50..=200));
+                }
+            }
+        }
+
+        let original_map = raw_map.clone();
+
+        for y in 0..height {
+            for x in 0..width {
+                if matches!(original_map[y][x], CellType::Obstacle) {
+                    let mut is_border = false;
+                    
+                    let neighbors = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+                    
+                    for (dx, dy) in neighbors {
+                        let nx = x as isize + dx;
+                        let ny = y as isize + dy;
+                        
+                        if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
+                            if !matches!(original_map[ny as usize][nx as usize], CellType::Obstacle) {
+                                is_border = true;
+                            }
+                        } else {
+                            is_border = true; 
+                        }
+                    }
+
+                    if is_border && rng.random_bool(0.10) {
+                        raw_map[y][x] = CellType::Metal(rng.random_range(50..=200)); 
+                    }
                 }
             }
         }
@@ -332,6 +384,7 @@ impl Simulation {
             known_resources,
             _claimed_resources: claimed_resources,
             cheat_mode: false,
+            selected_font: &DEFAULT_FONT,
             fear_factor: 0.5,
             meteorite_anims,
             meteorite_flights,
@@ -351,6 +404,16 @@ impl Simulation {
             let mut rng = rand::rng();
             let mut x = start_x;
             let mut y = start_y;
+
+            let dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+            let mut dir_idx: i32 = rng.random_range(0..4);
+
+            let mut rot_dir: i32 = if rng.random_bool(0.5) { 1 } else { -1 };
+
+            let mut is_expanding = true;
+            let mut step_limit = 1;
+            let mut current_steps = 0;
+            let mut segments_done = 0;
 
             loop {
                 thread::sleep(Duration::from_millis(rng.random_range(150..350)));
@@ -378,28 +441,91 @@ impl Simulation {
                     }
                 }
 
-                let candidates: Vec<(usize, usize)> = {
-                    let map_r = map.read().unwrap();
-                    let mut c = Vec::new();
-                    for dy in -1i32..=1 {
-                        for dx in -1i32..=1 {
-                            if dx == 0 && dy == 0 {
-                                continue;
+                let (dx, dy) = dirs[dir_idx as usize];
+                let ideal_nx = x as i32 + dx;
+                let ideal_ny = y as i32 + dy;
+
+                let hit_edge = ideal_nx < 0
+                    || ideal_nx >= width as i32
+                    || ideal_ny < 0
+                    || ideal_ny >= height as i32;
+
+                if hit_edge {
+                    is_expanding = !is_expanding;
+
+                    rot_dir = if rng.random_bool(0.5) { 1 } else { -1 };
+
+                    dir_idx = (dir_idx + rot_dir + 4) % 4;
+                    current_steps = 0;
+                    segments_done = 0;
+                } else {
+                    let mut moved_x = x;
+                    let mut moved_y = y;
+
+                    {
+                        let map_r = map.read().unwrap();
+                        if map_r[ideal_ny as usize][ideal_nx as usize].is_passable() {
+                            moved_x = ideal_nx as usize;
+                            moved_y = ideal_ny as usize;
+                        } else {
+                            let mut best_dist = i32::MAX;
+                            let mut best_pos = None;
+
+                            for test_dy in -1i32..=1 {
+                                for test_dx in -1i32..=1 {
+                                    if test_dx == 0 && test_dy == 0 {
+                                        continue;
+                                    }
+                                    let nx = x as i32 + test_dx;
+                                    let ny = y as i32 + test_dy;
+
+                                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32
+                                    {
+                                        if map_r[ny as usize][nx as usize].is_passable() {
+                                            let dist =
+                                                (nx - ideal_nx).abs() + (ny - ideal_ny).abs();
+                                            if dist < best_dist {
+                                                best_dist = dist;
+                                                best_pos = Some((nx as usize, ny as usize));
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            let nx = (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
-                            let ny = (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
-                            if map_r[ny][nx].is_passable() {
-                                c.push((nx, ny));
+
+                            if let Some((bx, by)) = best_pos {
+                                moved_x = bx;
+                                moved_y = by;
                             }
                         }
                     }
-                    c
-                };
 
-                if !candidates.is_empty() {
-                    let (nx, ny) = candidates[rng.random_range(0..candidates.len())];
-                    x = nx;
-                    y = ny;
+                    x = moved_x;
+                    y = moved_y;
+                    current_steps += 1;
+
+                    if current_steps >= step_limit {
+                        current_steps = 0;
+                        segments_done += 1;
+
+                        dir_idx = (dir_idx + rot_dir + 4) % 4;
+
+                        if segments_done >= 2 {
+                            segments_done = 0;
+                            if is_expanding {
+                                step_limit += 1;
+                            } else {
+                                step_limit -= 1;
+
+                                if step_limit <= 0 {
+                                    is_expanding = true;
+                                    step_limit = 1;
+
+                                    rot_dir = if rng.random_bool(0.5) { 1 } else { -1 };
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if sender.send(Message::Moved(id, x, y)).is_err() {
@@ -585,9 +711,9 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_energy += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_energy += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -608,9 +734,9 @@ impl Simulation {
                             }
                             CellType::Crystal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_crystals += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_crystals += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -631,9 +757,9 @@ impl Simulation {
                             }
                             CellType::Metal(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_metal += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_metal += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -654,9 +780,9 @@ impl Simulation {
                             }
                             CellType::Meat(n) => {
                                 if (x, y) == (tx, ty) {
-                                    carrying_meat += n;
-                                    claimed.write().unwrap().remove(&(tx, ty));
-                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    let take = (4u32).min(n);
+                                    carrying_meat += take;
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty, take));
                                     target = None;
                                     returning = true;
                                 } else {
@@ -801,7 +927,6 @@ impl Simulation {
     }
 
     pub fn create_random_energy(&mut self, count: usize) {
-        // Create the specified number of random energy
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
         for _ in 0..count {
@@ -960,12 +1085,71 @@ impl Simulation {
                         resources.push((x, y));
                     }
                 }
-                Message::ResourceCollected(x, y) => {
-                    self.map.write().unwrap()[y][x] = CellType::Empty;
-                    self.known_resources
-                        .write()
-                        .unwrap()
-                        .retain(|&(rx, ry)| !(rx == x && ry == y));
+                Message::ResourceCollected(x, y, amount) => {
+                    let mut map_w = self.map.write().unwrap();
+                    match map_w[y][x] {
+                        CellType::Energy(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Energy(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Crystal(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Crystal(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Metal(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Metal(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        CellType::Meat(n) => {
+                            if n > amount {
+                                map_w[y][x] = CellType::Meat(n - amount);
+                            } else {
+                                map_w[y][x] = CellType::Empty;
+                                self.known_resources
+                                    .write()
+                                    .unwrap()
+                                    .retain(|&(rx, ry)| !(rx == x && ry == y));
+                                self._claimed_resources
+                                    .write()
+                                    .unwrap()
+                                    .remove(&(x, y));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Message::Unloaded(energy, crystals, metal, meat) => {
                     if energy > 0 {
