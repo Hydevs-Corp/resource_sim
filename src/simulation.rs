@@ -720,7 +720,7 @@ impl Simulation {
         map: Arc<RwLock<Vec<Vec<CellType>>>>,
         known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
         claimed: Arc<RwLock<HashSet<(usize, usize)>>>,
-        shared_fear: Arc<RwLock<f32>>, // <-- Ajout du paramètre ici
+        shared_fear: Arc<RwLock<f32>>,
         width: usize,
         height: usize,
     ) {
