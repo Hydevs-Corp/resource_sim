@@ -182,11 +182,17 @@ fn step_towards(
 }
 
 impl Simulation {
+    // INITIALIZATION
+    // 1) Generate map
+    // 2) Generate Metal
+    // 3) Spawn base
+    // 4) Spawn robots
+    // 5)
     pub fn new(width: usize, height: usize) -> Self {
         let mut raw_map = vec![vec![CellType::Empty; width]; height];
         let mut rng = rand::rng();
         let perlin = Perlin::new(rng.random());
-
+        // 1
         for y in 0..height {
             for x in 0..width {
                 let nx = x as f64 / 10.0;
@@ -203,6 +209,7 @@ impl Simulation {
             }
         }
 
+        // 2
         let original_map = raw_map.clone();
 
         for y in 0..height {
@@ -233,6 +240,7 @@ impl Simulation {
             }
         }
 
+        // 3
         let base_x = width / 2;
         let base_y = height / 2;
         for dy in -1i32..=1 {
@@ -257,6 +265,7 @@ impl Simulation {
         let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> =
             Arc::new(RwLock::new(Vec::new()));
 
+        // 4
         for i in 0..5 {
             let r_type = if i < 2 {
                 RobotType::Scout
@@ -322,6 +331,7 @@ impl Simulation {
             );
         }
 
+        // 5
         let sender_spawner = sender.clone();
         let map_spawner = Arc::clone(&map);
         let robots_spawner = Arc::clone(&robots);
@@ -1157,6 +1167,135 @@ impl Simulation {
                         };
                     }
                 }
+            }
+        }
+
+        let target_army_units = (self.fear_factor / 10.0).floor() as usize;
+
+        let current_army_units = self
+            .robots
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|r| r.r_type == RobotType::Army)
+            .count();
+
+        if target_army_units > current_army_units {
+            let mut spawn_count = target_army_units - current_army_units;
+
+            while spawn_count > 0 && self.collected_metal >= 100 && self.collected_meat >= 10 {
+                self.collected_metal -= 100;
+                self.collected_meat -= 10;
+
+                self.base_hp = self.base_hp.saturating_add(500);
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Army,
+                    x: base_x,
+                    y: base_y,
+                    hp: 150,
+                });
+
+                Simulation::spawn_army(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    Arc::clone(&self.enemies),
+                    Arc::clone(&self.robots),
+                    self.width,
+                    self.height,
+                );
+
+                spawn_count -= 1;
+            }
+        }
+
+        let known_nodes_count = self.known_resources.read().unwrap().len();
+
+        if known_nodes_count < 20 {
+            // On compte combien de scouts sont actuellement actifs
+            let current_scouts = self
+                .robots
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|r| r.r_type == RobotType::Scout)
+                .count();
+            // Increase the amount of Scouts while less than 20 ressource nodes are known
+            // +1 Scout costs 50 energy and 5 crystals
+            if self.collected_crystals >= 50 {
+                self.collected_crystals -= 50;
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Scout,
+                    x: base_x,
+                    y: base_y,
+                    hp: 50,
+                });
+
+                Simulation::spawn_scout(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    self.width,
+                    self.height,
+                );
+            }
+
+            // Increase the amount of Collectors while less than 20 ressource nodes are known
+            // +1 Collector costs 50 crystals and 5 energy
+            if self.collected_crystals >= 15 && current_scouts > 0 {
+                self.collected_crystals -= 15;
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Collector,
+                    x: base_x,
+                    y: base_y,
+                    hp: 100,
+                });
+
+                Simulation::spawn_collector(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    Arc::clone(&self.known_resources),
+                    Arc::clone(&self._claimed_resources),
+                    self.width,
+                    self.height,
+                );
             }
         }
 
