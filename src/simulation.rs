@@ -131,11 +131,12 @@ pub struct Simulation {
     pub robots: Arc<RwLock<Vec<RobotState>>>,
     pub enemies: Arc<RwLock<Vec<EnemyState>>>,
     pub fear_factor: f32,
+    pub shared_fear: Arc<RwLock<f32>>,
     pub base_hp: i32,
     pub collected_crystals: u32,
     pub collected_meat: u32,
     pub collected_metal: u32,
-    pub _sender: Sender<Message>,
+    pub sender: Sender<Message>,
     pub cheat_mode: bool,
     pub meteorite_anims: Arc<RwLock<Vec<MeteoriteAnim>>>,
     pub meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>>,
@@ -195,11 +196,17 @@ fn step_towards(
 }
 
 impl Simulation {
+    // INITIALIZATION
+    // 1) Generate map
+    // 2) Generate Metal
+    // 3) Spawn base
+    // 4) Spawn robots
+    // 5)
     pub fn new(width: usize, height: usize) -> Self {
         let mut raw_map = vec![vec![CellType::Empty; width]; height];
         let mut rng = rand::rng();
         let perlin = Perlin::new(rng.random());
-
+        // 1
         for y in 0..height {
             for x in 0..width {
                 let nx = x as f64 / 10.0;
@@ -216,6 +223,7 @@ impl Simulation {
             }
         }
 
+        // 2
         let original_map = raw_map.clone();
 
         for y in 0..height {
@@ -246,6 +254,7 @@ impl Simulation {
             }
         }
 
+        // 3
         let base_x = width / 2;
         let base_y = height / 2;
         for dy in -1i32..=1 {
@@ -270,6 +279,9 @@ impl Simulation {
         let meteorite_flights: Arc<RwLock<Vec<MeteoriteFlight>>> =
             Arc::new(RwLock::new(Vec::new()));
 
+        let shared_fear = Arc::new(RwLock::new(0.5));
+
+        // 4
         for i in 0..5 {
             let r_type = if i < 2 {
                 RobotType::Scout
@@ -305,6 +317,7 @@ impl Simulation {
                     Arc::clone(&map),
                     Arc::clone(&known_resources),
                     Arc::clone(&claimed_resources),
+                    Arc::clone(&shared_fear),
                     width,
                     height,
                 );
@@ -335,6 +348,7 @@ impl Simulation {
             );
         }
 
+        // 5
         let sender_spawner = sender.clone();
         let map_spawner = Arc::clone(&map);
         let robots_spawner = Arc::clone(&robots);
@@ -420,6 +434,14 @@ impl Simulation {
             collected_metal: 0,
             _sender: sender,
             cheat_mode: false,
+            sender,
+            receiver,
+            known_resources,
+            _claimed_resources: claimed_resources,
+            cheat_mode: false,
+            shared_fear,
+            selected_font: &DEFAULT_FONT,
+            fear_factor: 0.5,
             meteorite_anims,
             meteorite_flights,
             wall_built: false,
@@ -719,6 +741,7 @@ impl Simulation {
         map: Arc<RwLock<Vec<Vec<CellType>>>>,
         known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
         claimed: Arc<RwLock<HashSet<(usize, usize)>>>,
+        shared_fear: Arc<RwLock<f32>>,
         width: usize,
         height: usize,
     ) {
@@ -760,13 +783,38 @@ impl Simulation {
                     }
                 } else {
                     if target.is_none() {
+                        // =========================================================
+                        // DEBUT DE LA NOUVELLE LOGIQUE DE PRIORITÉ
+                        // =========================================================
+                        let fear = *shared_fear.read().unwrap();
+
+                        // Traduction de ton tableau de priorité (1 = top priorité, 3 = basse priorité)
+                        let (army_p, col_p, scout_p) = if fear <= 20.0 {
+                            (3, 2, 1)
+                        } else if fear <= 50.0 {
+                            (2, 1, 3)
+                        } else if fear <= 70.0 {
+                            (1, 3, 2)
+                        } else {
+                            (1, 2, 3)
+                        };
+
+                        let get_prio = |cell: CellType| -> i32 {
+                            match cell {
+                                CellType::Crystal(_) => scout_p.min(col_p),
+                                CellType::Metal(_) | CellType::Meat(_) => army_p,
+                                CellType::Energy(_) => 1,
+                                _ => 99,
+                            }
+                        };
+
                         let found = {
                             let resources = known_resources.read().unwrap();
                             let map_r = map.read().unwrap();
                             let claimed_r = claimed.read().unwrap();
                             resources
                                 .iter()
-                                .find(|&&(rx, ry)| {
+                                .filter(|&&(rx, ry)| {
                                     matches!(
                                         map_r[ry][rx],
                                         CellType::Energy(_)
@@ -775,8 +823,19 @@ impl Simulation {
                                             | CellType::Meat(_)
                                     ) && !claimed_r.contains(&(rx, ry))
                                 })
+                                .min_by_key(|&&(rx, ry)| {
+                                    let cell = map_r[ry][rx];
+                                    let prio = get_prio(cell);
+                                    let dist =
+                                        (rx as i32 - x as i32).abs() + (ry as i32 - y as i32).abs();
+                                    (prio, dist)
+                                })
                                 .copied()
                         };
+                        // =========================================================
+                        // FIN DE LA NOUVELLE LOGIQUE
+                        // =========================================================
+
                         if let Some(t) = found {
                             claimed.write().unwrap().insert(t);
                             target = Some(t);
@@ -932,7 +991,6 @@ impl Simulation {
             }
         });
     }
-
     fn spawn_enemy(
         id: usize,
         start_x: usize,
@@ -1099,6 +1157,7 @@ impl Simulation {
         {
             let mut flights = self.meteorite_flights.write().unwrap();
             let mut arrived: Vec<(usize, usize)> = Vec::new();
+            *self.shared_fear.write().unwrap() = self.fear_factor;
             for f in flights.iter_mut() {
                 f.x += f.vx;
                 f.y += f.vy;
@@ -1253,6 +1312,136 @@ impl Simulation {
             }
         }
 
+        let target_army_units = (self.fear_factor / 10.0).floor() as usize;
+
+        let current_army_units = self
+            .robots
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|r| r.r_type == RobotType::Army)
+            .count();
+
+        if target_army_units > current_army_units {
+            let mut spawn_count = target_army_units - current_army_units;
+
+            while spawn_count > 0 && self.collected_metal >= 100 && self.collected_meat >= 10 {
+                self.collected_metal -= 100;
+                self.collected_meat -= 10;
+
+                self.base_hp = self.base_hp.saturating_add(500);
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Army,
+                    x: base_x,
+                    y: base_y,
+                    hp: 150,
+                });
+
+                Simulation::spawn_army(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    Arc::clone(&self.enemies),
+                    Arc::clone(&self.robots),
+                    self.width,
+                    self.height,
+                );
+
+                spawn_count -= 1;
+            }
+        }
+
+        let known_nodes_count = self.known_resources.read().unwrap().len();
+
+        if known_nodes_count < 20 {
+            // On compte combien de scouts sont actuellement actifs
+            let current_scouts = self
+                .robots
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|r| r.r_type == RobotType::Scout)
+                .count();
+            // Increase the amount of Scouts while less than 20 ressource nodes are known
+            // +1 Scout costs 50 energy and 5 crystals
+            if self.collected_crystals >= 50 {
+                self.collected_crystals -= 50;
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Scout,
+                    x: base_x,
+                    y: base_y,
+                    hp: 50,
+                });
+
+                Simulation::spawn_scout(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    self.width,
+                    self.height,
+                );
+            }
+
+            // Increase the amount of Collectors while less than 20 ressource nodes are known
+            // +1 Collector costs 50 crystals and 5 energy
+            if self.collected_crystals >= 15 && current_scouts > 0 {
+                self.collected_crystals -= 15;
+
+                let next_id = {
+                    let robs = self.robots.read().unwrap();
+                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+                };
+
+                let base_x = self.width / 2;
+                let base_y = self.height / 2;
+
+                self.robots.write().unwrap().push(RobotState {
+                    id: next_id,
+                    r_type: RobotType::Collector,
+                    x: base_x,
+                    y: base_y,
+                    hp: 100,
+                });
+
+                Simulation::spawn_collector(
+                    next_id,
+                    base_x,
+                    base_y,
+                    self.sender.clone(),
+                    Arc::clone(&self.map),
+                    Arc::clone(&self.known_resources),
+                    Arc::clone(&self._claimed_resources),
+                    Arc::clone(&self.shared_fear),
+                    self.width,
+                    self.height,
+                );
+            }
+        }
+
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
                 Message::Moved(id, x, y) => {
@@ -1404,7 +1593,7 @@ impl Simulation {
                         ty,
                     });
                 }
-                
+
                 Message::AttackBase(damage) => {
                     self.base_hp = self.base_hp.saturating_sub(damage as i32);
                     self.fear_factor = self.fear_factor + 10.0;
