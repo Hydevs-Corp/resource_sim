@@ -1,4 +1,4 @@
-use crate::simulation::{CellType, RobotType, Simulation};
+use crate::simulation::{CellType, RobotType, Simulation, METEORITE_ANIM_FRAMES};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -6,6 +6,21 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+
+
+fn meteorite_frame_visual(frame: u8) -> (&'static str, Color) {
+    match frame {
+        0 => ("☄", Color::LightYellow),
+        1 => ("✺", Color::White),
+        2 => ("✸", Color::LightRed),
+        3 => ("▓", Color::Rgb(255, 140, 0)),
+        4 => ("▒", Color::Rgb(180, 90, 30)),
+        5 => ("█", Color::Rgb(200, 50, 0)),
+        6 => ("▓", Color::Rgb(120, 60, 20)),
+        7 => ("░", Color::DarkGray),
+        _ => (" ", Color::DarkGray),
+    }
+}
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
@@ -42,6 +57,8 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let scroll_y = scroll_y.min(max_scroll_y);
 
     let robots_lock = sim.robots.read().unwrap();
+    let meteorite_anims = sim.meteorite_anims.read().unwrap();
+    let meteorite_flights = sim.meteorite_flights.read().unwrap();
     let mut map_lines = Vec::new();
     for y in scroll_y..(scroll_y + visible_height).min(sim.height) {
         let mut row_spans = Vec::new();
@@ -49,8 +66,15 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
             let robot_here = robots_lock.iter().find(|r| r.x == x && r.y == y);
             let enemies_lock = sim.enemies.read().unwrap();
             let enemy_here = enemies_lock.iter().find(|e| e.x == x && e.y == y);
+            let meteorite_here = meteorite_anims.iter().find(|a| a.x == x && a.y == y);
+            let flight_here = meteorite_flights.iter().find(|f| f.x.round() as usize == x && f.y.round() as usize == y);
 
-            let (symbol, color) = if let Some(_) = enemy_here {
+            let (symbol, color) = if let Some(_) = flight_here {
+                // falling meteor has priority
+                ("☄", Color::LightYellow)
+            } else if let Some(anim) = meteorite_here {
+                meteorite_frame_visual(anim.frame)
+            } else if let Some(_) = enemy_here {
                 ("V", Color::LightRed)
             } else if let Some(robot) = robot_here {
                 match robot.r_type {
@@ -103,6 +127,7 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         }
         map_lines.push(Line::from(row_spans));
     }
+    drop(meteorite_anims);
 
     let map_paragraph = Paragraph::new(map_lines);
     f.render_widget(map_paragraph, content_area);
@@ -168,13 +193,21 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         );
     }
 
+    let active_meteorites = sim.meteorite_anims.read().unwrap().len() + sim.meteorite_flights.read().unwrap().len();
+    let meteorite_indicator = if active_meteorites > 0 {
+        format!(" | ☄ Impact en cours: {}", active_meteorites)
+    } else {
+        String::new()
+    };
+
     let stats = format!(
-        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [q] Quitter | Facteur de peur: {:.2}",
+        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [q] Quitter | Facteur de peur: {:.2}{}",
         sim.base_hp,
         sim.collected_crystals,
         sim.collected_meat,
         sim.collected_metal,
-        sim.fear_factor
+        sim.fear_factor,
+        meteorite_indicator
     );
 
     let ui_paragraph = if sim.cheat_mode {
@@ -196,4 +229,9 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     };
 
     f.render_widget(ui_paragraph, chunks[1]);
+}
+
+#[allow(dead_code)]
+fn _assert_frame_count_used() {
+    let _ = METEORITE_ANIM_FRAMES;
 }
