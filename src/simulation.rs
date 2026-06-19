@@ -416,7 +416,10 @@ impl Simulation {
                                 (dx * dx + dy * dy) as f64 <= 100.0
                             })
                         })
-                        .min_by_key(|e| ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs()) as usize)
+                        .min_by_key(|e| {
+                            ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs())
+                                as usize
+                        })
                         .map(|e| (e.id, e.x, e.y))
                 };
 
@@ -441,7 +444,8 @@ impl Simulation {
                 if (x, y) != base {
                     let map_r = map.read().unwrap();
                     if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
-                        x = nx; y = ny;
+                        x = nx;
+                        y = ny;
                         let _ = sender.send(Message::Moved(id, x, y));
                     }
                 } else {
@@ -684,31 +688,29 @@ impl Simulation {
         height: usize,
     ) {
         thread::spawn(move || {
-            let mut rng = rand::rng();
             let mut x = start_x;
             let mut y = start_y;
-
+            let base = (width / 2, height / 2);
             loop {
                 thread::sleep(Duration::from_millis(300));
-
-                let target = {
+                let mut target = None;
+                let mut min_dist = 11.0;
+                {
                     let robs = robots.read().unwrap();
-                    robs.iter()
-                        .filter(|r| {
-                            let dx = (r.x as isize - x as isize).abs() as usize;
-                            let dy = (r.y as isize - y as isize).abs() as usize;
-                            (dx * dx + dy * dy) as f64 <= 100.0
-                        })
-                        .min_by_key(|r| {
-                            ((r.x as isize - x as isize).abs() + (r.y as isize - y as isize).abs())
-                                as usize
-                        })
-                        .map(|r| (r.id, r.x, r.y))
-                };
-
-                if let Some((rid, rx, ry)) = target {
+                    for r in robs.iter() {
+                        let dist = (((r.x as isize - x as isize).pow(2)
+                            + (r.y as isize - y as isize).pow(2))
+                            as f64)
+                            .sqrt();
+                        if dist <= 10.0 && dist < min_dist {
+                            min_dist = dist;
+                            target = Some((r.id, r.x, r.y));
+                        }
+                    }
+                }
+                if let Some((r_id, rx, ry)) = target {
                     if x == rx && y == ry {
-                        let _ = sender.send(Message::AttackRobot(rid, 10));
+                        let _ = sender.send(Message::AttackRobot(r_id, 10));
                     } else {
                         let map_r = map.read().unwrap();
                         if let Some((nx, ny)) =
@@ -716,11 +718,20 @@ impl Simulation {
                         {
                             x = nx;
                             y = ny;
-                            let _ = sender.send(Message::Moved(id, x, y));
+                            let _ = sender.send(Message::EnemyMoved(id, x, y));
                         }
                     }
                 } else {
-                    thread::sleep(Duration::from_millis(rng.random_range(100..300)));
+                    if (x, y) == base {
+                        let _ = sender.send(Message::AttackBase(10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                            x = nx;
+                            y = ny;
+                            let _ = sender.send(Message::EnemyMoved(id, x, y));
+                        }
+                    }
                 }
             }
         });
