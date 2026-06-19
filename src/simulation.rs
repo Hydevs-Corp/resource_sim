@@ -24,7 +24,6 @@ pub enum CellType {
     Meat(u32),
     Base,
 }
-
 impl CellType {
     fn is_passable(self) -> bool {
         !matches!(self, CellType::Obstacle)
@@ -199,7 +198,7 @@ impl Simulation {
             let id = next_id;
             next_id += 1;
             robots.write().unwrap().push(RobotState { id, r_type: RobotType::Army, x: base_x, y: base_y, hp: 150 });
-            Self::spawn_army(id, base_x, base_y, sender.clone(), Arc::clone(&map), Arc::clone(&enemies), width, height);
+            Self::spawn_army(id, base_x, base_y, sender.clone(), Arc::clone(&map), Arc::clone(&enemies), Arc::clone(&robots), width, height);
         }
 
         let sender_spawner = sender.clone();
@@ -313,6 +312,7 @@ impl Simulation {
         sender: Sender<Message>,
         map: Arc<RwLock<Vec<Vec<CellType>>>>,
         enemies: Arc<RwLock<Vec<EnemyState>>>,
+        robots: Arc<RwLock<Vec<RobotState>>>,
         width: usize,
         height: usize,
     ) {
@@ -323,7 +323,8 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_millis(200));
 
-                let target = {
+                // 1) find nearest enemy within radius 10 (own zone)
+                let own_target = {
                     let en = enemies.read().unwrap();
                     en.iter()
                         .filter(|e| {
@@ -333,9 +334,9 @@ impl Simulation {
                         })
                         .min_by_key(|e| ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs()) as usize)
                         .map(|e| (e.id, e.x, e.y))
-                    };
+                };
 
-                if let Some((eid, ex, ey)) = target {
+                if let Some((eid, ex, ey)) = own_target {
                     if x == ex && y == ey {
                         let _ = sender.send(Message::AttackEnemy(eid, 10));
                     } else {
@@ -345,7 +346,48 @@ impl Simulation {
                             let _ = sender.send(Message::Moved(id, x, y));
                         }
                     }
+                    continue;
+                }
+
+                // 2) find enemies that are within 10 of ANY other unit (priority 2)
+                let other_target = {
+                    let en = enemies.read().unwrap();
+                    let robs = robots.read().unwrap();
+                    en.iter()
+                        .filter(|e| {
+                            robs.iter().any(|r| {
+                                let dx = (e.x as isize - r.x as isize).abs() as usize;
+                                let dy = (e.y as isize - r.y as isize).abs() as usize;
+                                (dx * dx + dy * dy) as f64 <= 100.0
+                            })
+                        })
+                        .min_by_key(|e| ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs()) as usize)
+                        .map(|e| (e.id, e.x, e.y))
+                };
+
+                if let Some((eid, ex, ey)) = other_target {
+                    if x == ex && y == ey {
+                        let _ = sender.send(Message::AttackEnemy(eid, 10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (ex, ey), width, height) {
+                            x = nx; y = ny;
+                            let _ = sender.send(Message::Moved(id, x, y));
+                        }
+                    }
+                    continue;
+                }
+
+                // 3) no targets -> return to base
+                let base = (width / 2, height / 2);
+                if (x, y) != base {
+                    let map_r = map.read().unwrap();
+                    if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                        x = nx; y = ny;
+                        let _ = sender.send(Message::Moved(id, x, y));
+                    }
                 } else {
+                    // at base, short sleep/patrol
                     thread::sleep(Duration::from_millis(rng.random_range(100..300)));
                 }
             }
