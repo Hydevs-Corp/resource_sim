@@ -11,6 +11,7 @@ pub struct EnemyState {
     pub id: usize,
     pub x: usize,
     pub y: usize,
+    pub hp: i32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -19,6 +20,8 @@ pub enum CellType {
     Obstacle,
     Energy(u32),
     Crystal(u32),
+    Metal(u32),
+    Meat(u32),
     Base,
 }
 
@@ -32,6 +35,7 @@ impl CellType {
 pub enum RobotType {
     Scout,
     Collector,
+    Army,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -46,11 +50,12 @@ pub struct RobotState {
 pub enum Message {
     Moved(usize, usize, usize),
     ResourceFound(usize, usize),
-    ResourceCollected(usize, usize), 
-    Unloaded(u32, u32),
+    ResourceCollected(usize, usize),
+    Unloaded(u32, u32, u32, u32),
     EnemySpawned(usize, usize, usize),
     EnemyMoved(usize, usize, usize),
     AttackRobot(usize, i32),
+    AttackEnemy(usize, i32),
     AttackBase(u32),
 }
 
@@ -59,10 +64,13 @@ pub struct Simulation {
     pub height: usize,
     pub map: Arc<RwLock<Vec<Vec<CellType>>>>,
     pub robots: Arc<RwLock<Vec<RobotState>>>,
-    pub enemies: Vec<EnemyState>,
+    pub enemies: Arc<RwLock<Vec<EnemyState>>>,
     pub fear_factor: f32,
-    pub collected_energy: u32,
+    pub base_hp: i32,
     pub collected_crystals: u32,
+    pub collected_meat: u32,
+    pub collected_metal: u32,
+    pub sender: Sender<Message>,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -158,6 +166,7 @@ impl Simulation {
             Arc::new(RwLock::new(HashSet::new()));
         let (sender, receiver) = mpsc::channel();
         let robots = Arc::new(RwLock::new(Vec::new()));
+        let enemies = Arc::new(RwLock::new(Vec::new()));
 
         for i in 0..5 {
             let r_type = if i < 2 {
@@ -185,6 +194,14 @@ impl Simulation {
             }
         }
 
+        let mut next_id = robots.read().unwrap().len();
+        for _ in 0..2 {
+            let id = next_id;
+            next_id += 1;
+            robots.write().unwrap().push(RobotState { id, r_type: RobotType::Army, x: base_x, y: base_y, hp: 150 });
+            Self::spawn_army(id, base_x, base_y, sender.clone(), Arc::clone(&map), Arc::clone(&enemies), width, height);
+        }
+
         let sender_spawner = sender.clone();
         let map_spawner = Arc::clone(&map);
         let robots_spawner = Arc::clone(&robots);
@@ -210,9 +227,12 @@ impl Simulation {
 
         Simulation {
             width, height, map, robots,
-            enemies: Vec::new(),
-            collected_energy: 100,
+            enemies,
+            base_hp: 1000,
             collected_crystals: 0,
+            collected_meat: 0,
+            collected_metal: 0,
+            sender,
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
@@ -246,7 +266,7 @@ impl Simulation {
                             let ny = y as i32 + dy;
                             if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
                                 let cell = map_r[ny as usize][nx as usize];
-                                if matches!(cell, CellType::Energy(_) | CellType::Crystal(_)) {
+                                if matches!(cell, CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_)) {
                                     let _ = sender.send(Message::ResourceFound(
                                         nx as usize, ny as usize,
                                     ));
@@ -286,6 +306,52 @@ impl Simulation {
         });
     }
 
+    fn spawn_army(
+        id: usize,
+        start_x: usize,
+        start_y: usize,
+        sender: Sender<Message>,
+        map: Arc<RwLock<Vec<Vec<CellType>>>>,
+        enemies: Arc<RwLock<Vec<EnemyState>>>,
+        width: usize,
+        height: usize,
+    ) {
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            let mut x = start_x;
+            let mut y = start_y;
+            loop {
+                thread::sleep(Duration::from_millis(200));
+
+                let target = {
+                    let en = enemies.read().unwrap();
+                    en.iter()
+                        .filter(|e| {
+                            let dx = (e.x as isize - x as isize).abs() as usize;
+                            let dy = (e.y as isize - y as isize).abs() as usize;
+                            (dx * dx + dy * dy) as f64 <= 100.0
+                        })
+                        .min_by_key(|e| ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs()) as usize)
+                        .map(|e| (e.id, e.x, e.y))
+                    };
+
+                if let Some((eid, ex, ey)) = target {
+                    if x == ex && y == ey {
+                        let _ = sender.send(Message::AttackEnemy(eid, 10));
+                    } else {
+                        let map_r = map.read().unwrap();
+                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (ex, ey), width, height) {
+                            x = nx; y = ny;
+                            let _ = sender.send(Message::Moved(id, x, y));
+                        }
+                    }
+                } else {
+                    thread::sleep(Duration::from_millis(rng.random_range(100..300)));
+                }
+            }
+        });
+    }
+
     fn spawn_collector(
         id: usize,
         start_x: usize,
@@ -304,6 +370,8 @@ impl Simulation {
             let base = (start_x, start_y);
             let mut carrying_energy: u32 = 0;
             let mut carrying_crystals: u32 = 0;
+            let mut carrying_metal: u32 = 0;
+            let mut carrying_meat: u32 = 0;
             let mut target: Option<(usize, usize)> = None;
             let mut returning = false;
 
@@ -312,9 +380,11 @@ impl Simulation {
 
                 if returning {
                     if (x, y) == base {
-                        let _ = sender.send(Message::Unloaded(carrying_energy, carrying_crystals));
+                        let _ = sender.send(Message::Unloaded(carrying_energy, carrying_crystals, carrying_metal, carrying_meat));
                         carrying_energy = 0;
                         carrying_crystals = 0;
+                        carrying_metal = 0;
+                        carrying_meat = 0;
                         returning = false;
                     } else {
                         let map_r = map.read().unwrap();
@@ -333,7 +403,7 @@ impl Simulation {
                             let claimed_r = claimed.read().unwrap();
                             resources.iter()
                                 .find(|&&(rx, ry)| {
-                                    matches!(map_r[ry][rx], CellType::Energy(_) | CellType::Crystal(_))
+                                    matches!(map_r[ry][rx], CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_))
                                     && !claimed_r.contains(&(rx, ry))
                                 })
                                 .copied()
@@ -387,8 +457,45 @@ impl Simulation {
                                     }
                                 }
                             }
+                            CellType::Metal(n) => {
+                                if (x, y) == (tx, ty) {
+                                    carrying_metal += n;
+                                    claimed.write().unwrap().remove(&(tx, ty));
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    target = None;
+                                    returning = true;
+                                } else {
+                                    let map_r = map.read().unwrap();
+                                    match step_towards(&map_r, (x, y), (tx, ty), width, height) {
+                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        None => {
+                                            drop(map_r);
+                                            claimed.write().unwrap().remove(&(tx, ty));
+                                            target = None;
+                                        }
+                                    }
+                                }
+                            }
+                            CellType::Meat(n) => {
+                                if (x, y) == (tx, ty) {
+                                    carrying_meat += n;
+                                    claimed.write().unwrap().remove(&(tx, ty));
+                                    let _ = sender.send(Message::ResourceCollected(tx, ty));
+                                    target = None;
+                                    returning = true;
+                                } else {
+                                    let map_r = map.read().unwrap();
+                                    match step_towards(&map_r, (x, y), (tx, ty), width, height) {
+                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        None => {
+                                            drop(map_r);
+                                            claimed.write().unwrap().remove(&(tx, ty));
+                                            target = None;
+                                        }
+                                    }
+                                }
+                            }
                             _ => {
-                                
                                 claimed.write().unwrap().remove(&(tx, ty));
                                 target = None;
                             }
@@ -536,20 +643,39 @@ impl Simulation {
                     self.map.write().unwrap()[y][x] = CellType::Empty;
                     self.known_resources.write().unwrap().retain(|&(rx, ry)| !(rx == x && ry == y));
                 }
-                Message::Unloaded(energy, crystals) => {
-                    self.collected_energy += energy;
-                    self.collected_crystals += crystals;
-                    if energy > 0  {
-                        self.fear_factor = (self.fear_factor - 0.05).max(0.0);
+                Message::Unloaded(energy, crystals, metal, meat) => {
+                    if energy > 0 {
+                        self.base_hp = self.base_hp.saturating_add(energy as i32);
+                        self.fear_factor = (self.fear_factor - 1.0).max(0.0);
                     }
+                    self.collected_crystals = self.collected_crystals.saturating_add(crystals);
+                    self.collected_metal = self.collected_metal.saturating_add(metal);
+                    self.collected_meat = self.collected_meat.saturating_add(meat);
                 }
                 Message::EnemySpawned(id, x, y) => {
-                    self.enemies.push(EnemyState { id, x, y });
+                    self.enemies.write().unwrap().push(EnemyState { id, x, y, hp: 30 });
                 }
                 Message::EnemyMoved(id, x, y) => {
-                    if let Some(enemy) = self.enemies.iter_mut().find(|e| e.id == id) {
+                    let mut en = self.enemies.write().unwrap();
+                    if let Some(enemy) = en.iter_mut().find(|e| e.id == id) {
                         enemy.x = x;
                         enemy.y = y;
+                    }
+                }
+                Message::AttackEnemy(id, damage) => {
+                    let mut en = self.enemies.write().unwrap();
+                    if let Some(idx) = en.iter().position(|e| e.id == id) {
+                        en[idx].hp -= damage;
+                        if en[idx].hp <= 0 {
+                            let ex = en[idx].x;
+                            let ey = en[idx].y;
+                            en.remove(idx);
+                            let mut map_w = self.map.write().unwrap();
+                            if map_w[ey][ex] == CellType::Empty {
+                                map_w[ey][ex] = CellType::Meat(30);
+                            }
+                            self.fear_factor = (self.fear_factor - 1.0).max(0.0);
+                        }
                     }
                 }
                 Message::AttackRobot(id, damage) => {
@@ -563,7 +689,7 @@ impl Simulation {
                     robs.retain(|r| r.hp > 0);
                 }
                 Message::AttackBase(damage) => {
-                    self.collected_energy = self.collected_energy.saturating_sub(damage);
+                    self.base_hp = self.base_hp.saturating_sub(damage as i32);
                     self.fear_factor = self.fear_factor + 10.0 ;
                 }
             }

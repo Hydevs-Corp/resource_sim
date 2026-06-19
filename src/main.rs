@@ -107,8 +107,8 @@ fn run_app(
             }
         }
 
-        // Enter paused state when energy reaches 0
-        if !paused && sim.collected_energy == 0 {
+        // Enter paused state when base HP reaches 0
+        if !paused && sim.base_hp <= 0 {
             paused = true;
         }
     }
