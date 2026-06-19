@@ -1,8 +1,8 @@
 use noise::{NoiseFn, Perlin};
 use rand::RngExt;
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -70,6 +70,7 @@ pub struct Simulation {
     pub collected_meat: u32,
     pub collected_metal: u32,
     pub sender: Sender<Message>,
+    pub cheat_mode: bool,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -159,8 +160,7 @@ impl Simulation {
         raw_map[base_y][base_x] = CellType::Base;
 
         let map = Arc::new(RwLock::new(raw_map));
-        let known_resources: Arc<RwLock<Vec<(usize, usize)>>> =
-            Arc::new(RwLock::new(Vec::new()));
+        let known_resources: Arc<RwLock<Vec<(usize, usize)>>> = Arc::new(RwLock::new(Vec::new()));
         let claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>> =
             Arc::new(RwLock::new(HashSet::new()));
         let (sender, receiver) = mpsc::channel();
@@ -174,21 +174,36 @@ impl Simulation {
                 RobotType::Collector
             };
             let hp = if r_type == RobotType::Scout { 50 } else { 100 };
-            robots.write().unwrap().push(RobotState { id: i, r_type, x: base_x, y: base_y, hp });
+            robots.write().unwrap().push(RobotState {
+                id: i,
+                r_type,
+                x: base_x,
+                y: base_y,
+                hp,
+            });
 
             let sender_clone = sender.clone();
             if r_type == RobotType::Scout {
                 Self::spawn_scout(
-                    i, base_x, base_y, sender_clone,
-                    Arc::clone(&map), width, height,
+                    i,
+                    base_x,
+                    base_y,
+                    sender_clone,
+                    Arc::clone(&map),
+                    width,
+                    height,
                 );
             } else {
                 Self::spawn_collector(
-                    i, base_x, base_y, sender_clone,
+                    i,
+                    base_x,
+                    base_y,
+                    sender_clone,
                     Arc::clone(&map),
                     Arc::clone(&known_resources),
                     Arc::clone(&claimed_resources),
-                    width, height,
+                    width,
+                    height,
                 );
             }
         }
@@ -197,8 +212,24 @@ impl Simulation {
         for _ in 0..2 {
             let id = next_id;
             next_id += 1;
-            robots.write().unwrap().push(RobotState { id, r_type: RobotType::Army, x: base_x, y: base_y, hp: 150 });
-            Self::spawn_army(id, base_x, base_y, sender.clone(), Arc::clone(&map), Arc::clone(&enemies), Arc::clone(&robots), width, height);
+            robots.write().unwrap().push(RobotState {
+                id,
+                r_type: RobotType::Army,
+                x: base_x,
+                y: base_y,
+                hp: 150,
+            });
+            Self::spawn_army(
+                id,
+                base_x,
+                base_y,
+                sender.clone(),
+                Arc::clone(&map),
+                Arc::clone(&enemies),
+                Arc::clone(&robots),
+                width,
+                height,
+            );
         }
 
         let sender_spawner = sender.clone();
@@ -219,13 +250,25 @@ impl Simulation {
                     _ => (w - 1, rng.random_range(0..h)),
                 };
                 let _ = sender_spawner.send(Message::EnemySpawned(enemy_id, ex, ey));
-                Self::spawn_enemy(enemy_id, ex, ey, sender_spawner.clone(), Arc::clone(&map_spawner), Arc::clone(&robots_spawner), w, h);
+                Self::spawn_enemy(
+                    enemy_id,
+                    ex,
+                    ey,
+                    sender_spawner.clone(),
+                    Arc::clone(&map_spawner),
+                    Arc::clone(&robots_spawner),
+                    w,
+                    h,
+                );
                 enemy_id += 1;
             }
         });
 
         Simulation {
-            width, height, map, robots,
+            width,
+            height,
+            map,
+            robots,
             enemies,
             base_hp: 1000,
             collected_crystals: 0,
@@ -235,6 +278,7 @@ impl Simulation {
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
+            cheat_mode: false,
             fear_factor: 0.5,
         }
     }
@@ -256,7 +300,6 @@ impl Simulation {
             loop {
                 thread::sleep(Duration::from_millis(rng.random_range(150..350)));
 
-                
                 {
                     let map_r = map.read().unwrap();
                     for dy in -1i32..=1 {
@@ -265,23 +308,29 @@ impl Simulation {
                             let ny = y as i32 + dy;
                             if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
                                 let cell = map_r[ny as usize][nx as usize];
-                                if matches!(cell, CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_)) {
-                                    let _ = sender.send(Message::ResourceFound(
-                                        nx as usize, ny as usize,
-                                    ));
+                                if matches!(
+                                    cell,
+                                    CellType::Energy(_)
+                                        | CellType::Crystal(_)
+                                        | CellType::Metal(_)
+                                        | CellType::Meat(_)
+                                ) {
+                                    let _ = sender
+                                        .send(Message::ResourceFound(nx as usize, ny as usize));
                                 }
                             }
                         }
                     }
                 }
 
-                
                 let candidates: Vec<(usize, usize)> = {
                     let map_r = map.read().unwrap();
                     let mut c = Vec::new();
                     for dy in -1i32..=1 {
                         for dx in -1i32..=1 {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let nx = (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
                             let ny = (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
                             if map_r[ny][nx].is_passable() {
@@ -332,7 +381,10 @@ impl Simulation {
                             let dy = (e.y as isize - y as isize).abs() as usize;
                             (dx * dx + dy * dy) as f64 <= 100.0
                         })
-                        .min_by_key(|e| ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs()) as usize)
+                        .min_by_key(|e| {
+                            ((e.x as isize - x as isize).abs() + (e.y as isize - y as isize).abs())
+                                as usize
+                        })
                         .map(|e| (e.id, e.x, e.y))
                 };
 
@@ -341,8 +393,11 @@ impl Simulation {
                         let _ = sender.send(Message::AttackEnemy(eid, 10));
                     } else {
                         let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (ex, ey), width, height) {
-                            x = nx; y = ny;
+                        if let Some((nx, ny)) =
+                            step_towards(&map_r, (x, y), (ex, ey), width, height)
+                        {
+                            x = nx;
+                            y = ny;
                             let _ = sender.send(Message::Moved(id, x, y));
                         }
                     }
@@ -370,8 +425,11 @@ impl Simulation {
                         let _ = sender.send(Message::AttackEnemy(eid, 10));
                     } else {
                         let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (ex, ey), width, height) {
-                            x = nx; y = ny;
+                        if let Some((nx, ny)) =
+                            step_towards(&map_r, (x, y), (ex, ey), width, height)
+                        {
+                            x = nx;
+                            y = ny;
                             let _ = sender.send(Message::Moved(id, x, y));
                         }
                     }
@@ -422,7 +480,12 @@ impl Simulation {
 
                 if returning {
                     if (x, y) == base {
-                        let _ = sender.send(Message::Unloaded(carrying_energy, carrying_crystals, carrying_metal, carrying_meat));
+                        let _ = sender.send(Message::Unloaded(
+                            carrying_energy,
+                            carrying_crystals,
+                            carrying_metal,
+                            carrying_meat,
+                        ));
                         carrying_energy = 0;
                         carrying_crystals = 0;
                         carrying_metal = 0;
@@ -437,16 +500,21 @@ impl Simulation {
                         }
                     }
                 } else {
-                    
                     if target.is_none() {
                         let found = {
                             let resources = known_resources.read().unwrap();
                             let map_r = map.read().unwrap();
                             let claimed_r = claimed.read().unwrap();
-                            resources.iter()
+                            resources
+                                .iter()
                                 .find(|&&(rx, ry)| {
-                                    matches!(map_r[ry][rx], CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_))
-                                    && !claimed_r.contains(&(rx, ry))
+                                    matches!(
+                                        map_r[ry][rx],
+                                        CellType::Energy(_)
+                                            | CellType::Crystal(_)
+                                            | CellType::Metal(_)
+                                            | CellType::Meat(_)
+                                    ) && !claimed_r.contains(&(rx, ry))
                                 })
                                 .copied()
                         };
@@ -462,7 +530,6 @@ impl Simulation {
                         match cell {
                             CellType::Energy(n) => {
                                 if (x, y) == (tx, ty) {
-                                    
                                     carrying_energy += n;
                                     claimed.write().unwrap().remove(&(tx, ty));
                                     let _ = sender.send(Message::ResourceCollected(tx, ty));
@@ -471,7 +538,11 @@ impl Simulation {
                                 } else {
                                     let map_r = map.read().unwrap();
                                     match step_towards(&map_r, (x, y), (tx, ty), width, height) {
-                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        Some((nx, ny)) => {
+                                            drop(map_r);
+                                            x = nx;
+                                            y = ny;
+                                        }
                                         None => {
                                             drop(map_r);
                                             claimed.write().unwrap().remove(&(tx, ty));
@@ -490,7 +561,11 @@ impl Simulation {
                                 } else {
                                     let map_r = map.read().unwrap();
                                     match step_towards(&map_r, (x, y), (tx, ty), width, height) {
-                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        Some((nx, ny)) => {
+                                            drop(map_r);
+                                            x = nx;
+                                            y = ny;
+                                        }
                                         None => {
                                             drop(map_r);
                                             claimed.write().unwrap().remove(&(tx, ty));
@@ -509,7 +584,11 @@ impl Simulation {
                                 } else {
                                     let map_r = map.read().unwrap();
                                     match step_towards(&map_r, (x, y), (tx, ty), width, height) {
-                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        Some((nx, ny)) => {
+                                            drop(map_r);
+                                            x = nx;
+                                            y = ny;
+                                        }
                                         None => {
                                             drop(map_r);
                                             claimed.write().unwrap().remove(&(tx, ty));
@@ -528,7 +607,11 @@ impl Simulation {
                                 } else {
                                     let map_r = map.read().unwrap();
                                     match step_towards(&map_r, (x, y), (tx, ty), width, height) {
-                                        Some((nx, ny)) => { drop(map_r); x = nx; y = ny; }
+                                        Some((nx, ny)) => {
+                                            drop(map_r);
+                                            x = nx;
+                                            y = ny;
+                                        }
                                         None => {
                                             drop(map_r);
                                             claimed.write().unwrap().remove(&(tx, ty));
@@ -543,17 +626,19 @@ impl Simulation {
                             }
                         }
                     } else {
-                        
                         if (x, y) == base {
-                            
                             let candidates: Vec<(usize, usize)> = {
                                 let map_r = map.read().unwrap();
                                 let mut c = Vec::new();
                                 for dy in -1i32..=1 {
                                     for dx in -1i32..=1 {
-                                        if dx == 0 && dy == 0 { continue; }
-                                        let nx = (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
-                                        let ny = (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
+                                        if dx == 0 && dy == 0 {
+                                            continue;
+                                        }
+                                        let nx =
+                                            (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
+                                        let ny =
+                                            (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
                                         if map_r[ny][nx].is_passable() {
                                             c.push((nx, ny));
                                         }
@@ -567,16 +652,16 @@ impl Simulation {
                                 y = ny;
                             }
                         } else {
-                            
                             let map_r = map.read().unwrap();
-                            if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
+                            if let Some((nx, ny)) =
+                                step_towards(&map_r, (x, y), base, width, height)
+                            {
                                 drop(map_r);
                                 if (nx, ny) != base {
                                     x = nx;
                                     y = ny;
                                 }
                             }
-                            
                         }
                     }
                 }
@@ -599,53 +684,53 @@ impl Simulation {
         height: usize,
     ) {
         thread::spawn(move || {
+            let mut rng = rand::rng();
             let mut x = start_x;
             let mut y = start_y;
-            let base = (width / 2, height / 2);
+
             loop {
                 thread::sleep(Duration::from_millis(300));
-                let mut target = None;
-                let mut min_dist = 11.0;
-                {
+
+                let target = {
                     let robs = robots.read().unwrap();
-                    for r in robs.iter() {
-                        let dist = (((r.x as isize - x as isize).pow(2) + (r.y as isize - y as isize).pow(2)) as f64).sqrt();
-                        if dist <= 10.0 && dist < min_dist {
-                            min_dist = dist;
-                            target = Some((r.id, r.x, r.y));
-                        }
-                    }
-                }
-                if let Some((r_id, rx, ry)) = target {
+                    robs.iter()
+                        .filter(|r| {
+                            let dx = (r.x as isize - x as isize).abs() as usize;
+                            let dy = (r.y as isize - y as isize).abs() as usize;
+                            (dx * dx + dy * dy) as f64 <= 100.0
+                        })
+                        .min_by_key(|r| {
+                            ((r.x as isize - x as isize).abs() + (r.y as isize - y as isize).abs())
+                                as usize
+                        })
+                        .map(|r| (r.id, r.x, r.y))
+                };
+
+                if let Some((rid, rx, ry)) = target {
                     if x == rx && y == ry {
-                        let _ = sender.send(Message::AttackRobot(r_id, 10));
+                        let _ = sender.send(Message::AttackRobot(rid, 10));
                     } else {
                         let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), (rx, ry), width, height) {
-                            x = nx; y = ny;
-                            let _ = sender.send(Message::EnemyMoved(id, x, y));
+                        if let Some((nx, ny)) =
+                            step_towards(&map_r, (x, y), (rx, ry), width, height)
+                        {
+                            x = nx;
+                            y = ny;
+                            let _ = sender.send(Message::Moved(id, x, y));
                         }
                     }
                 } else {
-                    if (x, y) == base {
-                        let _ = sender.send(Message::AttackBase(10));
-                    } else {
-                        let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = step_towards(&map_r, (x, y), base, width, height) {
-                            x = nx; y = ny;
-                            let _ = sender.send(Message::EnemyMoved(id, x, y));
-                        }
-                    }
+                    thread::sleep(Duration::from_millis(rng.random_range(100..300)));
                 }
             }
         });
     }
 
-
-    pub fn create_random_crystals(&mut self) { // Create 5 random crystals
+    pub fn create_random_crystals(&mut self, count: usize) {
+        // Create the specified number of random crystals
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
-        for _ in 0..5 {
+        for _ in 0..count {
             let x = rng.random_range(0..self.width);
             let y = rng.random_range(0..self.height);
             if map_w[y][x] == CellType::Empty {
@@ -654,10 +739,11 @@ impl Simulation {
         }
     }
 
-    pub fn create_random_energy(&mut self) { // Create 5 random energy
+    pub fn create_random_energy(&mut self, count: usize) {
+        // Create the specified number of random energy
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
-        for _ in 0..5 {
+        for _ in 0..count {
             let x = rng.random_range(0..self.width);
             let y = rng.random_range(0..self.height);
             if map_w[y][x] == CellType::Empty {
@@ -670,7 +756,9 @@ impl Simulation {
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
                 Message::Moved(id, x, y) => {
-                    if let Some(robot) = self.robots.write().unwrap().iter_mut().find(|r| r.id == id) {
+                    if let Some(robot) =
+                        self.robots.write().unwrap().iter_mut().find(|r| r.id == id)
+                    {
                         robot.x = x;
                         robot.y = y;
                     }
@@ -683,7 +771,10 @@ impl Simulation {
                 }
                 Message::ResourceCollected(x, y) => {
                     self.map.write().unwrap()[y][x] = CellType::Empty;
-                    self.known_resources.write().unwrap().retain(|&(rx, ry)| !(rx == x && ry == y));
+                    self.known_resources
+                        .write()
+                        .unwrap()
+                        .retain(|&(rx, ry)| !(rx == x && ry == y));
                 }
                 Message::Unloaded(energy, crystals, metal, meat) => {
                     if energy > 0 {
@@ -695,7 +786,10 @@ impl Simulation {
                     self.collected_meat = self.collected_meat.saturating_add(meat);
                 }
                 Message::EnemySpawned(id, x, y) => {
-                    self.enemies.write().unwrap().push(EnemyState { id, x, y, hp: 30 });
+                    self.enemies
+                        .write()
+                        .unwrap()
+                        .push(EnemyState { id, x, y, hp: 30 });
                 }
                 Message::EnemyMoved(id, x, y) => {
                     let mut en = self.enemies.write().unwrap();
@@ -725,14 +819,14 @@ impl Simulation {
                     if let Some(robot) = robs.iter_mut().find(|r| r.id == id) {
                         robot.hp -= damage;
                         if robot.hp <= 0 {
-                            self.fear_factor = self.fear_factor + 5.0 ;
+                            self.fear_factor = self.fear_factor + 5.0;
                         }
                     }
                     robs.retain(|r| r.hp > 0);
                 }
                 Message::AttackBase(damage) => {
                     self.base_hp = self.base_hp.saturating_sub(damage as i32);
-                    self.fear_factor = self.fear_factor + 10.0 ;
+                    self.fear_factor = self.fear_factor + 10.0;
                 }
             }
         }

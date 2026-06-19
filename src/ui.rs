@@ -1,11 +1,11 @@
+use crate::simulation::{CellType, RobotType, Simulation};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
-    Frame,
 };
-use crate::simulation::{CellType, RobotType, Simulation};
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
@@ -14,7 +14,9 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         .split(f.area());
 
     let map = sim.map.read().unwrap();
-    let map_block = Block::default().borders(Borders::ALL).title("Simulation de Collecte");
+    let map_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Simulation de Collecte");
     let map_inner = map_block.inner(chunks[0]);
     f.render_widget(map_block, chunks[0]);
 
@@ -53,7 +55,7 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
             } else if let Some(robot) = robot_here {
                 match robot.r_type {
                     RobotType::Scout => ("x", Color::Red),
-                    RobotType::Collector => ("o", Color::Magenta),
+                    RobotType::Collector => ("o", Color::LightMagenta),
                     RobotType::Army => ("A", Color::LightYellow),
                 }
             } else {
@@ -63,7 +65,7 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                     CellType::Energy(_) => ("E", Color::Green),
                     CellType::Crystal(_) => ("C", Color::LightMagenta),
                     CellType::Metal(_) => ("M", Color::LightBlue),
-                    CellType::Meat(_) => ("m", Color::Rgb(150,75,0)),
+                    CellType::Meat(_) => ("m", Color::Rgb(150, 75, 0)),
                     CellType::Base => ("#", Color::Yellow),
                 }
             };
@@ -79,19 +81,28 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let mut vertical_state = ScrollbarState::new(sim.height)
         .position(scroll_y)
         .viewport_content_length(visible_height);
-    f.render_stateful_widget(vertical_scrollbar, vertical_scrollbar_area, &mut vertical_state);
+    f.render_stateful_widget(
+        vertical_scrollbar,
+        vertical_scrollbar_area,
+        &mut vertical_state,
+    );
 
-    let horizontal_scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::HorizontalBottom);
+    let horizontal_scrollbar =
+        Scrollbar::default().orientation(ScrollbarOrientation::HorizontalBottom);
     let mut horizontal_state = ScrollbarState::new(sim.width)
         .position(scroll_x)
         .viewport_content_length(visible_width);
-    f.render_stateful_widget(horizontal_scrollbar, horizontal_scrollbar_area, &mut horizontal_state);
+    f.render_stateful_widget(
+        horizontal_scrollbar,
+        horizontal_scrollbar_area,
+        &mut horizontal_state,
+    );
 
     let base_x = sim.width / 2;
     let base_y = sim.height / 2;
     let marker_style = Style::default().fg(Color::LightGreen);
 
-    let v_track_height = vertical_scrollbar_area.height.saturating_sub(2); 
+    let v_track_height = vertical_scrollbar_area.height.saturating_sub(2);
     if v_track_height > 0 && sim.height > 0 {
         let relative_y = (base_y * v_track_height as usize) / sim.height;
         let marker_y = vertical_scrollbar_area.y + 1 + relative_y as u16;
@@ -121,15 +132,38 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         let overlay = Paragraph::new("La simulation est terminée")
             .block(Block::default().borders(Borders::ALL))
             .style(Style::default().fg(Color::White).bg(Color::DarkGray));
-        f.render_widget(overlay, Rect::new(overlay_x, overlay_y, overlay_width, overlay_height));
+        f.render_widget(
+            overlay,
+            Rect::new(overlay_x, overlay_y, overlay_width, overlay_height),
+        );
     }
 
     let stats = format!(
-        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | Flèches: déplacer | [q] Quitter | Facteur de peur: {:.2}",
-        sim.base_hp, sim.collected_crystals, sim.collected_meat, sim.collected_metal, sim.fear_factor
+        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [q] Quitter | Facteur de peur: {:.2}",
+        sim.base_hp,
+        sim.collected_crystals,
+        sim.collected_meat,
+        sim.collected_metal,
+        sim.fear_factor
     );
-    let ui_paragraph = Paragraph::new(stats)
-        .block(Block::default().borders(Borders::ALL).title("Tableau de bord"))
-        .style(Style::default().fg(Color::Yellow));
+
+    let ui_paragraph = if sim.cheat_mode {
+        Paragraph::new(stats)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("[CheatMode] Tableau de bord"),
+            )
+            .style(Style::default().fg(Color::LightRed))
+    } else {
+        Paragraph::new(stats)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Tableau de bord"),
+            )
+            .style(Style::default().fg(Color::Yellow))
+    };
+
     f.render_widget(ui_paragraph, chunks[1]);
 }
