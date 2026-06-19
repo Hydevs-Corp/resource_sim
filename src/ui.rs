@@ -1,11 +1,11 @@
+use crate::simulation::{CellType, RobotType, Simulation};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
-    Frame,
 };
-use crate::simulation::{CellType, RobotType, Simulation};
 
 pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let chunks = Layout::default()
@@ -14,7 +14,9 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         .split(f.area());
 
     let map = sim.map.read().unwrap();
-    let map_block = Block::default().borders(Borders::ALL).title("Simulation de Collecte");
+    let map_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Simulation de Collecte");
     let map_inner = map_block.inner(chunks[0]);
     f.render_widget(map_block, chunks[0]);
 
@@ -48,7 +50,7 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
             let (symbol, color) = if let Some(robot) = robot_here {
                 match robot.r_type {
                     RobotType::Scout => ("x", Color::Red),
-                    RobotType::Collector => ("o", Color::Magenta),
+                    RobotType::Collector => ("o", Color::LightMagenta),
                 }
             } else {
                 match map[y][x] {
@@ -71,19 +73,28 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     let mut vertical_state = ScrollbarState::new(sim.height)
         .position(scroll_y)
         .viewport_content_length(visible_height);
-    f.render_stateful_widget(vertical_scrollbar, vertical_scrollbar_area, &mut vertical_state);
+    f.render_stateful_widget(
+        vertical_scrollbar,
+        vertical_scrollbar_area,
+        &mut vertical_state,
+    );
 
-    let horizontal_scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::HorizontalBottom);
+    let horizontal_scrollbar =
+        Scrollbar::default().orientation(ScrollbarOrientation::HorizontalBottom);
     let mut horizontal_state = ScrollbarState::new(sim.width)
         .position(scroll_x)
         .viewport_content_length(visible_width);
-    f.render_stateful_widget(horizontal_scrollbar, horizontal_scrollbar_area, &mut horizontal_state);
+    f.render_stateful_widget(
+        horizontal_scrollbar,
+        horizontal_scrollbar_area,
+        &mut horizontal_state,
+    );
 
     let base_x = sim.width / 2;
     let base_y = sim.height / 2;
     let marker_style = Style::default().fg(Color::LightGreen);
 
-    let v_track_height = vertical_scrollbar_area.height.saturating_sub(2); 
+    let v_track_height = vertical_scrollbar_area.height.saturating_sub(2);
     if v_track_height > 0 && sim.height > 0 {
         let relative_y = (base_y * v_track_height as usize) / sim.height;
         let marker_y = vertical_scrollbar_area.y + 1 + relative_y as u16;
@@ -104,11 +115,27 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     }
 
     let stats = format!(
-        " Énergie: {} | Cristaux: {} | Flèches: déplacer | [q] Quitter ",
+        " Énergie: {} | Cristaux: {} | [←↑↓→]: déplacer | [q] Quitter ",
         sim.collected_energy, sim.collected_crystals
     );
-    let ui_paragraph = Paragraph::new(stats)
-        .block(Block::default().borders(Borders::ALL).title("Tableau de bord"))
-        .style(Style::default().fg(Color::Yellow));
+
+    let ui_paragraph = if sim.cheat_mode {
+        Paragraph::new(stats)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("[CheatMode] Tableau de bord"),
+            )
+            .style(Style::default().fg(Color::LightRed))
+    } else {
+        Paragraph::new(stats)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Tableau de bord"),
+            )
+            .style(Style::default().fg(Color::Yellow))
+    };
+
     f.render_widget(ui_paragraph, chunks[1]);
 }

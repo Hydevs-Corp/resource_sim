@@ -48,6 +48,7 @@ pub struct Simulation {
     pub robots: Vec<RobotState>,
     pub collected_energy: u32,
     pub collected_crystals: u32,
+    pub cheat_mode: bool,
     receiver: Receiver<Message>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     _claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>>,
@@ -176,6 +177,7 @@ impl Simulation {
             receiver,
             known_resources,
             _claimed_resources: claimed_resources,
+            cheat_mode: false,
         }
     }
 
@@ -399,10 +401,10 @@ impl Simulation {
     }
 
 
-    pub fn create_random_crystals(&mut self) { // Create 5 random crystals
+    pub fn create_random_crystals(&mut self, count: usize) { // Create the specified number of random crystals
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
-        for _ in 0..5 {
+        for _ in 0..count {
             let x = rng.random_range(0..self.width);
             let y = rng.random_range(0..self.height);
             if map_w[y][x] == CellType::Empty {
@@ -411,10 +413,10 @@ impl Simulation {
         }
     }
 
-    pub fn create_random_energy(&mut self) { // Create 5 random energy
+    pub fn create_random_energy(&mut self, count: usize) { // Create the specified number of random energy
         let mut rng = rand::rng();
         let mut map_w = self.map.write().unwrap();
-        for _ in 0..5 {
+        for _ in 0..count {
             let x = rng.random_range(0..self.width);
             let y = rng.random_range(0..self.height);
             if map_w[y][x] == CellType::Empty {
