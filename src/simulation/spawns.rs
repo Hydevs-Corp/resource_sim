@@ -2,12 +2,80 @@ use super::*;
 use std::thread;
 use std::time::Duration;
 
+const FLEE_VISION_RANGE: f64 = 10.0;
+
+fn has_line_of_sight(
+    map: &Vec<Vec<CellType>>,
+    from: (usize, usize),
+    to: (usize, usize),
+) -> bool {
+    let mut x0 = from.0 as isize;
+    let mut y0 = from.1 as isize;
+    let x1 = to.0 as isize;
+    let y1 = to.1 as isize;
+
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+
+    loop {
+        if (x0, y0) != (from.0 as isize, from.1 as isize)
+            && (x0, y0) != (to.0 as isize, to.1 as isize)
+            && !map[y0 as usize][x0 as usize].is_passable()
+        {
+            return false;
+        }
+
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+
+    true
+}
+
+fn nearest_visible_enemy(
+    map: &Vec<Vec<CellType>>,
+    enemies: &[EnemyState],
+    from: (usize, usize),
+) -> Option<(usize, usize, usize)> {
+    enemies
+        .iter()
+        .filter_map(|enemy| {
+            let dx = enemy.x as isize - from.0 as isize;
+            let dy = enemy.y as isize - from.1 as isize;
+            let distance_sq = (dx * dx + dy * dy) as f64;
+            if distance_sq > FLEE_VISION_RANGE * FLEE_VISION_RANGE {
+                return None;
+            }
+            if !has_line_of_sight(map, from, (enemy.x, enemy.y)) {
+                return None;
+            }
+            Some((enemy.id, enemy.x, enemy.y, distance_sq))
+        })
+        .min_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(id, x, y, _)| (id, x, y))
+}
+
 pub fn spawn_scout(
     id: usize,
     start_x: usize,
     start_y: usize,
     sender: Sender<Message>,
     map: Arc<RwLock<Vec<Vec<CellType>>>>,
+    enemies: Arc<RwLock<Vec<EnemyState>>>,
     width: usize,
     height: usize,
 ) {
@@ -15,6 +83,7 @@ pub fn spawn_scout(
         let mut rng = rand::rng();
         let mut x = start_x;
         let mut y = start_y;
+        let base = (width / 2, height / 2);
 
         let dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)];
         let mut dir_idx: i32 = rng.random_range(0..4);
@@ -29,6 +98,25 @@ pub fn spawn_scout(
         loop {
             thread::sleep(Duration::from_millis(rng.random_range(150..350)));
 
+            let flee_target = {
+                let map_r = map.read().unwrap();
+                let enemies_r = enemies.read().unwrap();
+                nearest_visible_enemy(&map_r, enemies_r.as_slice(), (x, y))
+            };
+
+            if flee_target.is_some() {
+                let map_r = map.read().unwrap();
+                if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), base, width, height) {
+                    x = nx;
+                    y = ny;
+                }
+
+                if sender.send(Message::Moved(id, x, y)).is_err() {
+                    break;
+                }
+                continue;
+            }
+
             {
                 let map_r = map.read().unwrap();
                 for dy in -1i32..=1 {
@@ -39,9 +127,13 @@ pub fn spawn_scout(
                             let cell = map_r[ny as usize][nx as usize];
                             if matches!(
                                 cell,
-                                CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_)
+                                CellType::Energy(_)
+                                    | CellType::Crystal(_)
+                                    | CellType::Metal(_)
+                                    | CellType::Meat(_)
                             ) {
-                                let _ = sender.send(Message::ResourceFound(nx as usize, ny as usize));
+                                let _ =
+                                    sender.send(Message::ResourceFound(nx as usize, ny as usize));
                             }
                         }
                     }
@@ -262,7 +354,8 @@ pub fn spawn_army(
             };
 
             if (x, y) != guard_post {
-                if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), guard_post, width, height)
+                if let Some((nx, ny)) =
+                    super::step_towards(&map_r, (x, y), guard_post, width, height)
                 {
                     drop(map_r);
                     x = nx;
@@ -283,6 +376,7 @@ pub fn spawn_collector(
     start_y: usize,
     sender: Sender<Message>,
     map: Arc<RwLock<Vec<Vec<CellType>>>>,
+    enemies: Arc<RwLock<Vec<EnemyState>>>,
     known_resources: Arc<RwLock<Vec<(usize, usize)>>>,
     claimed: Arc<RwLock<HashSet<(usize, usize)>>>,
     shared_fear: Arc<RwLock<f32>>,
@@ -304,6 +398,19 @@ pub fn spawn_collector(
         loop {
             thread::sleep(Duration::from_millis(150));
 
+            let should_flee = {
+                let map_r = map.read().unwrap();
+                let enemies_r = enemies.read().unwrap();
+                nearest_visible_enemy(&map_r, enemies_r.as_slice(), (x, y)).is_some()
+            };
+
+            if should_flee {
+                if let Some(t) = target.take() {
+                    claimed.write().unwrap().remove(&t);
+                }
+                returning = true;
+            }
+
             if returning {
                 if (x, y) == base {
                     let _ = sender.send(Message::Unloaded(
@@ -319,7 +426,8 @@ pub fn spawn_collector(
                     returning = false;
                 } else {
                     let map_r = map.read().unwrap();
-                    if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), base, width, height) {
+                    if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), base, width, height)
+                    {
                         drop(map_r);
                         x = nx;
                         y = ny;
@@ -357,13 +465,17 @@ pub fn spawn_collector(
                             .filter(|&&(rx, ry)| {
                                 matches!(
                                     map_r[ry][rx],
-                                    CellType::Energy(_) | CellType::Crystal(_) | CellType::Metal(_) | CellType::Meat(_)
+                                    CellType::Energy(_)
+                                        | CellType::Crystal(_)
+                                        | CellType::Metal(_)
+                                        | CellType::Meat(_)
                                 ) && !claimed_r.contains(&(rx, ry))
                             })
                             .min_by_key(|&&(rx, ry)| {
                                 let cell = map_r[ry][rx];
                                 let prio = get_prio(cell);
-                                let dist = (rx as i32 - x as i32).abs() + (ry as i32 - y as i32).abs();
+                                let dist =
+                                    (rx as i32 - x as i32).abs() + (ry as i32 - y as i32).abs();
                                 (prio, dist)
                             })
                             .copied()
@@ -383,8 +495,14 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_energy += take;
-                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
-                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                if sender
+                                    .send(Message::ResourceCollected(tx, ty, take))
+                                    .is_err()
+                                {
+                                    eprintln!(
+                                        "collector {}: receiver closed while sending ResourceCollected",
+                                        id
+                                    );
                                     break;
                                 }
                                 claimed.write().unwrap().remove(&(tx, ty));
@@ -410,8 +528,14 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_crystals += take;
-                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
-                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                if sender
+                                    .send(Message::ResourceCollected(tx, ty, take))
+                                    .is_err()
+                                {
+                                    eprintln!(
+                                        "collector {}: receiver closed while sending ResourceCollected",
+                                        id
+                                    );
                                     break;
                                 }
                                 target = None;
@@ -436,8 +560,14 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_metal += take;
-                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
-                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                if sender
+                                    .send(Message::ResourceCollected(tx, ty, take))
+                                    .is_err()
+                                {
+                                    eprintln!(
+                                        "collector {}: receiver closed while sending ResourceCollected",
+                                        id
+                                    );
                                     break;
                                 }
                                 target = None;
@@ -462,8 +592,14 @@ pub fn spawn_collector(
                             if (x, y) == (tx, ty) {
                                 let take = (50u32).min(n);
                                 carrying_meat += take;
-                                if sender.send(Message::ResourceCollected(tx, ty, take)).is_err() {
-                                    eprintln!("collector {}: receiver closed while sending ResourceCollected", id);
+                                if sender
+                                    .send(Message::ResourceCollected(tx, ty, take))
+                                    .is_err()
+                                {
+                                    eprintln!(
+                                        "collector {}: receiver closed while sending ResourceCollected",
+                                        id
+                                    );
                                     break;
                                 }
                                 target = None;
@@ -499,10 +635,8 @@ pub fn spawn_collector(
                                     if dx == 0 && dy == 0 {
                                         continue;
                                     }
-                                    let nx =
-                                        (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
-                                    let ny =
-                                        (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
+                                    let nx = (x as i32 + dx).clamp(0, (width - 1) as i32) as usize;
+                                    let ny = (y as i32 + dy).clamp(0, (height - 1) as i32) as usize;
                                     if map_r[ny][nx].is_passable() {
                                         c.push((nx, ny));
                                     }
@@ -517,20 +651,22 @@ pub fn spawn_collector(
                         }
                     } else {
                         let map_r = map.read().unwrap();
-                        if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), base, width, height) {
+                        if let Some((nx, ny)) =
+                            super::step_towards(&map_r, (x, y), base, width, height)
+                        {
                             drop(map_r);
-                            if (nx, ny) != base {
-                                x = nx;
-                                y = ny;
-                            }
+                            x = nx;
+                            y = ny;
                         }
                     }
                 }
-
-                    if sender.send(Message::Moved(id, x, y)).is_err() {
-                        eprintln!("collector {}: receiver closed while sending Moved, exiting thread", id);
-                        break;
-                    }
+            }
+            if sender.send(Message::Moved(id, x, y)).is_err() {
+                eprintln!(
+                    "collector {}: receiver closed while sending Moved, exiting thread",
+                    id
+                );
+                break;
             }
         }
     });
@@ -572,7 +708,9 @@ pub fn spawn_enemy(
                     let _ = sender.send(Message::AttackRobot(r_id, 10));
                 } else {
                     let map_r = map.read().unwrap();
-                    if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), (rx, ry), width, height) {
+                    if let Some((nx, ny)) =
+                        super::step_towards(&map_r, (x, y), (rx, ry), width, height)
+                    {
                         x = nx;
                         y = ny;
                         let _ = sender.send(Message::EnemyMoved(id, x, y));
@@ -599,7 +737,9 @@ pub fn spawn_enemy(
                         }
                         let (dxu, dyu) = (*dx as usize, *dy as usize);
                         if matches!(map_r[dyu][dxu], CellType::Door(_) | CellType::Wall(_)) {
-                            let d = ((dxu as isize - x as isize).abs() + (dyu as isize - y as isize).abs()) as usize;
+                            let d = ((dxu as isize - x as isize).abs()
+                                + (dyu as isize - y as isize).abs())
+                                as usize;
                             if d < ndist {
                                 ndist = d;
                                 nearest = Some((dxu, dyu));
@@ -610,14 +750,18 @@ pub fn spawn_enemy(
                         if (x, y) == (tx, ty) {
                             let _ = sender.send(Message::AttackDoor(tx, ty, 10));
                         } else {
-                            if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), (tx, ty), width, height) {
+                            if let Some((nx, ny)) =
+                                super::step_towards(&map_r, (x, y), (tx, ty), width, height)
+                            {
                                 x = nx;
                                 y = ny;
                                 let _ = sender.send(Message::EnemyMoved(id, x, y));
                             }
                         }
                     } else {
-                        if let Some((nx, ny)) = super::step_towards(&map_r, (x, y), base, width, height) {
+                        if let Some((nx, ny)) =
+                            super::step_towards(&map_r, (x, y), base, width, height)
+                        {
                             x = nx;
                             y = ny;
                             let _ = sender.send(Message::EnemyMoved(id, x, y));

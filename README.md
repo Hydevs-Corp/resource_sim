@@ -12,6 +12,8 @@ cargo run --release
 
 Appuyer sur n'importe quelle touche pour quitter.
 
+Pendant la partie, `F3` exporte l'état actuel de la carte dans un fichier `.md` texte dans le dossier courant.
+
 ## Fonctionnement
 
 ### Carte

@@ -1,4 +1,4 @@
-use crate::simulation::{CellType, RobotType, Simulation, METEORITE_ANIM_FRAMES, BASE_WALL_RADIUS};
+use crate::simulation::{BASE_WALL_RADIUS, CellType, METEORITE_ANIM_FRAMES, RobotType, Simulation};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,7 +9,13 @@ use ratatui::{
 
 use crate::ui::visuals::meteorite_frame_visual;
 
-pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
+pub fn draw(
+    f: &mut Frame,
+    sim: &Simulation,
+    scroll_x: usize,
+    scroll_y: usize,
+    export_status: Option<&str>,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(3)])
@@ -54,7 +60,9 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
             let enemies_lock = sim.enemies.read().unwrap();
             let enemy_here = enemies_lock.iter().find(|e| e.x == x && e.y == y);
             let meteorite_here = meteorite_anims.iter().find(|a| a.x == x && a.y == y);
-            let flight_here = meteorite_flights.iter().find(|f| f.x.round() as usize == x && f.y.round() as usize == y);
+            let flight_here = meteorite_flights
+                .iter()
+                .find(|f| f.x.round() as usize == x && f.y.round() as usize == y);
 
             let (symbol, color) = if let Some(_) = flight_here {
                 ("☄", Color::LightYellow)
@@ -113,7 +121,10 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
                     ),
                     CellType::Door(hp) => {
                         if hp == 0 {
-                            (sim.selected_font.cells["Empty"].character.as_str(), Color::Reset)
+                            (
+                                sim.selected_font.cells["Empty"].character.as_str(),
+                                Color::Reset,
+                            )
                         } else {
                             ("D", Color::LightYellow)
                         }
@@ -190,21 +201,27 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
         );
     }
 
-    let active_meteorites = sim.meteorite_anims.read().unwrap().len() + sim.meteorite_flights.read().unwrap().len();
+    let active_meteorites =
+        sim.meteorite_anims.read().unwrap().len() + sim.meteorite_flights.read().unwrap().len();
     let meteorite_indicator = if active_meteorites > 0 {
         format!(" | ☄ Impact en cours: {}", active_meteorites)
     } else {
         String::new()
     };
 
+    let export_indicator = export_status
+        .map(|message| format!(" | {}", message))
+        .unwrap_or_default();
+
     let stats = format!(
-        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [q] Quitter | Facteur de peur: {:.2}{}",
+        " HP: {} | Cristaux: {} | Viande: {} | Métal: {} | [←↑↓→]: déplacer | [F3]: export .md | [q] Quitter | Facteur de peur: {:.2}{}{}",
         sim.base_hp,
         sim.collected_crystals,
         sim.collected_meat,
         sim.collected_metal,
         sim.fear_factor,
-        meteorite_indicator
+        meteorite_indicator,
+        export_indicator
     );
 
     // Read door HPs from the map and append to stats
@@ -257,6 +274,64 @@ pub fn draw(f: &mut Frame, sim: &Simulation, scroll_x: usize, scroll_y: usize) {
     };
 
     f.render_widget(ui_paragraph, chunks[1]);
+
+    let known_resources = sim.get_known_resources();
+    let mut resource_lines = Vec::new();
+
+    let mut resource_counts: std::collections::HashMap<&'static str, usize> =
+        std::collections::HashMap::new();
+
+    for (x, y) in known_resources {
+        if x < sim.width && y < sim.height {
+            let cell = map[y][x];
+
+            let category = match cell {
+                CellType::Energy(_) => "Energy",
+                CellType::Crystal(_) => "Crystal",
+                CellType::Metal(_) => "Metal",
+                CellType::Meat(_) => "Meat",
+                _ => "Unknown",
+            };
+
+            let count = resource_counts.entry(category).or_insert(0);
+            *count += 1;
+        }
+    }
+
+    let mut sorted_resources: Vec<(&str, usize)> = resource_counts.into_iter().collect();
+
+    sorted_resources.sort_by_key(|&(category, _)| match category {
+        "Energy" => 1,
+        "Crystal" => 2,
+        "Metal" => 3,
+        "Meat" => 4,
+        _ => 5,
+    });
+
+    for (category, count) in sorted_resources {
+        let symbol = if category == "Unknown" {
+            "?"
+        } else {
+            sim.selected_font.cells[category].character.as_str()
+        };
+
+        resource_lines.push(Line::from(Span::raw(format!("{}: {}", symbol, count))));
+    }
+
+    let resource_paragraph = Paragraph::new(resource_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Ressources connues"),
+        )
+        .style(Style::default().fg(Color::Cyan));
+    let resource_area = Rect::new(
+        chunks[0].x + chunks[0].width.saturating_sub(30),
+        chunks[0].y,
+        30,
+        chunks[0].height,
+    );
+    f.render_widget(resource_paragraph, resource_area);
 }
 
 #[allow(dead_code)]

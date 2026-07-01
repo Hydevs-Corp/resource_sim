@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
 };
 use simulation::Simulation;
-use std::{error::Error, io, time::Duration};
+use std::{error::Error, fs, io, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
@@ -47,6 +47,7 @@ fn run_app(
 ) -> io::Result<()> {
     let mut scroll_x: usize = 0;
     let mut scroll_y: usize = 0;
+    let mut export_status: Option<String> = None;
 
     let mut last_pressed_keys: VecDeque<crossterm::event::KeyEvent> = VecDeque::with_capacity(10);
     let mut paused = false;
@@ -60,7 +61,7 @@ fn run_app(
             sim.update();
         }
 
-        terminal.draw(|f| ui::draw(f, sim, scroll_x, scroll_y))?;
+        terminal.draw(|f| ui::draw(f, sim, scroll_x, scroll_y, export_status.as_deref()))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
@@ -110,6 +111,24 @@ fn run_app(
                     crossterm::event::KeyCode::Char('h') => {
                         scroll_x = sim.width;
                         scroll_y = sim.height;
+                    }
+
+                    // save current layout to a file .md
+                    crossterm::event::KeyCode::F(3) => {
+                        let timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|duration| duration.as_secs())
+                            .unwrap_or_default();
+                        let file_name = format!("resource_sim_map_{}.md", timestamp);
+
+                        match fs::write(&file_name, sim.export_markdown()) {
+                            Ok(_) => {
+                                export_status = Some(format!("Export .md: {}", file_name));
+                            }
+                            Err(err) => {
+                                export_status = Some(format!("Export failed: {}", err));
+                            }
+                        }
                     }
 
                     crossterm::event::KeyCode::Left => {
@@ -162,6 +181,8 @@ fn run_app(
                     _ => {}
                 }
             }
+
+            
 
             // Enter paused state when base HP reaches 0
             if !paused && sim.base_hp <= 0 {

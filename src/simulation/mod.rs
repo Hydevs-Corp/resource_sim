@@ -1,5 +1,6 @@
 use noise::{NoiseFn, Perlin};
 use rand::RngExt;
+use std::fmt::Write as _;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
@@ -19,7 +20,7 @@ pub struct EnemyState {
     pub hp: i32,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CellType {
     Empty,
     Obstacle,
@@ -35,7 +36,7 @@ impl CellType {
     fn is_passable(self) -> bool {
         match self {
             CellType::Obstacle => false,
-            CellType::Wall(_) => false,
+            CellType::Wall(_) => true,
             CellType::Door(hp) => hp == 0,
             _ => true,
         }
@@ -299,6 +300,7 @@ impl Simulation {
                     base_y,
                     sender_clone,
                     Arc::clone(&map),
+                    Arc::clone(&enemies),
                     width,
                     height,
                 );
@@ -309,6 +311,7 @@ impl Simulation {
                     base_y,
                     sender_clone,
                     Arc::clone(&map),
+                    Arc::clone(&enemies),
                     Arc::clone(&known_resources),
                     Arc::clone(&claimed_resources),
                     Arc::clone(&shared_fear),
@@ -711,76 +714,81 @@ impl Simulation {
 
         let known_nodes_count = self.known_resources.read().unwrap().len();
 
-        if known_nodes_count < 20 {
-            let current_scouts = self
-                .robots
-                .read()
-                .unwrap()
-                .iter()
-                .filter(|r| r.r_type == RobotType::Scout)
-                .count();
-            if self.collected_crystals >= 50 {
-                self.collected_crystals -= 50;
+        let current_scouts = self
+            .robots
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|r| r.r_type == RobotType::Scout)
+            .count();
+        let current_collectors = self
+            .robots
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|r| r.r_type == RobotType::Collector)
+            .count();
 
-                let next_id = {
-                    let robs = self.robots.read().unwrap();
-                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
-                };
+        let needed_scouts = (known_nodes_count / std::cmp::max(current_collectors, 1)).max(1);
+        let do_spawn_scouts = current_scouts < needed_scouts;
+        let needed_collectors = (known_nodes_count / 5).max(3);
+        let do_spawn_collectors = current_collectors < needed_collectors;
 
-                let base_x = self.width / 2;
-                let base_y = self.height / 2;
+        if do_spawn_collectors && self.collected_meat >= 15 {
+            self.collected_meat -= 15;
+            let next_id = {
+                let robs = self.robots.read().unwrap();
+                robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+            };
+            let base_x = self.width / 2;
+            let base_y = self.height / 2;
+            self.robots.write().unwrap().push(RobotState {
+                id: next_id,
+                r_type: RobotType::Collector,
+                x: base_x,
+                y: base_y,
+                hp: 100,
+            });
+            spawns::spawn_collector(
+                next_id,
+                base_x,
+                base_y,
+                self.sender.clone(),
+                Arc::clone(&self.map),
+                Arc::clone(&self.enemies),
+                Arc::clone(&self.known_resources),
+                Arc::clone(&self._claimed_resources),
+                Arc::clone(&self.shared_fear),
+                self.width,
+                self.height,
+            );
+        }
 
-                self.robots.write().unwrap().push(RobotState {
-                    id: next_id,
-                    r_type: RobotType::Scout,
-                    x: base_x,
-                    y: base_y,
-                    hp: 50,
-                });
-
-                spawns::spawn_scout(
-                    next_id,
-                    base_x,
-                    base_y,
-                    self.sender.clone(),
-                    Arc::clone(&self.map),
-                    self.width,
-                    self.height,
-                );
-            }
-
-            if self.collected_crystals >= 15 && current_scouts > 0 {
-                self.collected_crystals -= 15;
-
-                let next_id = {
-                    let robs = self.robots.read().unwrap();
-                    robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
-                };
-
-                let base_x = self.width / 2;
-                let base_y = self.height / 2;
-
-                self.robots.write().unwrap().push(RobotState {
-                    id: next_id,
-                    r_type: RobotType::Collector,
-                    x: base_x,
-                    y: base_y,
-                    hp: 100,
-                });
-
-                spawns::spawn_collector(
-                    next_id,
-                    base_x,
-                    base_y,
-                    self.sender.clone(),
-                    Arc::clone(&self.map),
-                    Arc::clone(&self.known_resources),
-                    Arc::clone(&self._claimed_resources),
-                    Arc::clone(&self.shared_fear),
-                    self.width,
-                    self.height,
-                );
-            }
+        if do_spawn_scouts && self.collected_crystals >= 50 {
+            self.collected_crystals -= 50;
+            let next_id = {
+                let robs = self.robots.read().unwrap();
+                robs.iter().map(|r| r.id).max().unwrap_or(0) + 1
+            };
+            let base_x = self.width / 2;
+            let base_y = self.height / 2;
+            self.robots.write().unwrap().push(RobotState {
+                id: next_id,
+                r_type: RobotType::Scout,
+                x: base_x,
+                y: base_y,
+                hp: 50,
+            });
+            spawns::spawn_scout(
+                next_id,
+                base_x,
+                base_y,
+                self.sender.clone(),
+                Arc::clone(&self.map),
+                Arc::clone(&self.enemies),
+                self.width,
+                self.height,
+            );
         }
 
         while let Ok(msg) = self.receiver.try_recv() {
@@ -805,6 +813,7 @@ impl Simulation {
                         CellType::Energy(n) => {
                             if n > amount {
                                 map_w[y][x] = CellType::Energy(n - amount);
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             } else {
                                 map_w[y][x] = CellType::Empty;
                                 self.known_resources
@@ -817,6 +826,7 @@ impl Simulation {
                         CellType::Crystal(n) => {
                             if n > amount {
                                 map_w[y][x] = CellType::Crystal(n - amount);
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             } else {
                                 map_w[y][x] = CellType::Empty;
                                 self.known_resources
@@ -829,6 +839,7 @@ impl Simulation {
                         CellType::Metal(n) => {
                             if n > amount {
                                 map_w[y][x] = CellType::Metal(n - amount);
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             } else {
                                 map_w[y][x] = CellType::Empty;
                                 self.known_resources
@@ -841,6 +852,7 @@ impl Simulation {
                         CellType::Meat(n) => {
                             if n > amount {
                                 map_w[y][x] = CellType::Meat(n - amount);
+                                self._claimed_resources.write().unwrap().remove(&(x, y));
                             } else {
                                 map_w[y][x] = CellType::Empty;
                                 self.known_resources
@@ -939,5 +951,125 @@ impl Simulation {
                 }
             }
         }
+    }
+
+    pub fn get_known_resources(&self) -> Vec<(usize, usize)> {
+        self.known_resources.read().unwrap().clone()
+    }
+
+    pub fn export_markdown(&self) -> String {
+        let map = self.map.read().unwrap();
+        let robots = self.robots.read().unwrap().clone();
+        let enemies = self.enemies.read().unwrap().clone();
+        let meteorite_anims = self.meteorite_anims.read().unwrap().clone();
+        let meteorite_flights = self.meteorite_flights.read().unwrap().clone();
+
+        let mut overlay = vec![vec![None; self.width]; self.height];
+
+        let place = |overlay: &mut Vec<Vec<Option<char>>>, x: isize, y: isize, ch: char| {
+            if x >= 0 && y >= 0 {
+                let x = x as usize;
+                let y = y as usize;
+                if y < overlay.len() && x < overlay[y].len() && overlay[y][x].is_none() {
+                    overlay[y][x] = Some(ch);
+                }
+            }
+        };
+
+        for flight in &meteorite_flights {
+            place(
+                &mut overlay,
+                flight.x.round() as isize,
+                flight.y.round() as isize,
+                '^',
+            );
+        }
+
+        for anim in &meteorite_anims {
+            place(&mut overlay, anim.x as isize, anim.y as isize, '*');
+        }
+
+        for enemy in &enemies {
+            place(&mut overlay, enemy.x as isize, enemy.y as isize, 'V');
+        }
+
+        for robot in &robots {
+            let symbol = match robot.r_type {
+                RobotType::Scout => 'S',
+                RobotType::Collector => 'C',
+                RobotType::Army => 'A',
+            };
+            place(&mut overlay, robot.x as isize, robot.y as isize, symbol);
+        }
+
+        let mut output = String::new();
+        let _ = writeln!(&mut output, "# Resource Sim Snapshot");
+        let _ = writeln!(&mut output);
+        let _ = writeln!(
+            &mut output,
+            "- Size: {}x{}\n- Base HP: {}\n- Fear factor: {:.2}\n- Robots: {}\n- Enemies: {}\n- Meteorites actifs: {}",
+            self.width,
+            self.height,
+            self.base_hp,
+            self.fear_factor,
+            robots.len(),
+            enemies.len(),
+            meteorite_anims.len() + meteorite_flights.len(),
+        );
+        let _ = writeln!(&mut output);
+        let _ = writeln!(&mut output, "## Legend");
+        let _ = writeln!(&mut output, "- . = Empty");
+        let _ = writeln!(&mut output, "- X = Obstacle");
+        let _ = writeln!(&mut output, "- W = Wall");
+        let _ = writeln!(&mut output, "- D = Door closed");
+        let _ = writeln!(&mut output, "- E = Energy");
+        let _ = writeln!(&mut output, "- C = Crystal / Collector");
+        let _ = writeln!(&mut output, "- M = Metal");
+        let _ = writeln!(&mut output, "- m = Meat");
+        let _ = writeln!(&mut output, "- B = Base");
+        let _ = writeln!(&mut output, "- S = Scout");
+        let _ = writeln!(&mut output, "- A = Army");
+        let _ = writeln!(&mut output, "- V = Enemy");
+        let _ = writeln!(&mut output, "- ^ = Meteorite flight");
+        let _ = writeln!(&mut output, "- * = Meteorite impact");
+        let _ = writeln!(&mut output);
+        let _ = writeln!(&mut output, "## Map");
+        let _ = writeln!(&mut output, "```text");
+
+        for y in 0..self.height {
+            let mut row = String::with_capacity(self.width + 8);
+            let _ = write!(&mut row, "{:03} ", y);
+
+            for x in 0..self.width {
+                let cell = if let Some(symbol) = overlay[y][x] {
+                    symbol
+                } else {
+                    match map[y][x] {
+                        CellType::Empty => '.',
+                        CellType::Obstacle => 'X',
+                        CellType::Wall(_) => 'W',
+                        CellType::Door(hp) => {
+                            if hp == 0 {
+                                '.'
+                            } else {
+                                'D'
+                            }
+                        }
+                        CellType::Energy(_) => 'E',
+                        CellType::Crystal(_) => 'C',
+                        CellType::Metal(_) => 'M',
+                        CellType::Meat(_) => 'm',
+                        CellType::Base => 'B',
+                    }
+                };
+                row.push(cell);
+            }
+
+            let _ = writeln!(&mut output, "{}", row);
+        }
+
+        let _ = writeln!(&mut output, "```");
+
+        output
     }
 }
