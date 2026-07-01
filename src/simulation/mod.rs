@@ -559,7 +559,7 @@ impl Simulation {
         thread::spawn(move || {
             let mut rng = rand::rng();
             let mut enemy_id = {
-                let en = robots_spawner.read().unwrap();
+                let _en = robots_spawner.read().unwrap();
                 0
             };
             loop {

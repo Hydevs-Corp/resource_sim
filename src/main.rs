@@ -11,10 +11,9 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    layout::{Constraint, Direction, Layout},
+    style::{Modifier, Style},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 use simulation::{Simulation, config::SimulationConfig, state::GameState};
 use std::{
