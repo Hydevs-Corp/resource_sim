@@ -1,5 +1,6 @@
 mod simulation;
 mod ui;
+mod server;
 use std::collections::VecDeque;
 
 use clap::Parser;
@@ -26,6 +27,10 @@ use std::{
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(long)]
+    server: bool,
+    #[arg(long)]
+    port: Option<u16>,
+    #[arg(long)]
     new: bool,
     #[arg(long)]
     resume: Option<String>,
@@ -49,7 +54,8 @@ struct Args {
     height: Option<usize>,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let mut config = SimulationConfig::default();
@@ -79,6 +85,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if let Some(v) = args.height {
         config.height = v;
+    }
+
+    if args.server {
+        let port = args.port.unwrap_or(3000);
+        let sim = if args.new {
+            Simulation::new(config.width, config.height, config)
+        } else if let Some(path) = &args.resume {
+            if let Ok(data) = fs::read_to_string(path) {
+                if let Ok(state) = serde_json::from_str::<GameState>(&data) {
+                    Simulation::from_state(state)
+                } else {
+                    Simulation::new(config.width, config.height, config)
+                }
+            } else {
+                Simulation::new(config.width, config.height, config)
+            }
+        } else {
+            Simulation::new(config.width, config.height, config)
+        };
+        
+        let sim_arc = std::sync::Arc::new(std::sync::Mutex::new(sim));
+        let sim_clone = sim_arc.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+            loop {
+                interval.tick().await;
+                let mut sim_lock = sim_clone.lock().unwrap();
+                if sim_lock.base_hp > 0 {
+                    sim_lock.update();
+                }
+            }
+        });
+
+        server::run_server(sim_arc, port).await;
+        return Ok(());
     }
 
     enable_raw_mode()?;

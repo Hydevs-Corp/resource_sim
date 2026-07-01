@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resource Sim - Live Monitor</title>
+    <meta name="description" content="Real-time monitoring dashboard for the Rust Resource Simulation.">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1>Resource Sim</h1>
+                <div id="connection-status" class="status-indicator offline">
+                    <span class="pulse"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="stats-panel">
+                    <div class="stat-box">
+                        <span class="stat-label">Base HP</span>
+                        <span id="stat-base-hp" class="stat-value">---</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Crystals</span>
+                        <span id="stat-crystals" class="stat-value text-blue">---</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Metal</span>
+                        <span id="stat-metal" class="stat-value text-gray">---</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Meat</span>
+                        <span id="stat-meat" class="stat-value text-red">---</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <main class="dashboard-main">
+            <div class="canvas-wrapper">
+                <canvas id="sim-canvas"></canvas>
+            </div>
+            
+            <aside class="sidebar">
+                <div class="card">
+                    <h2>Simulation Info</h2>
+                    <ul class="info-list">
+                        <li>
+                            <span class="info-label">Fear Factor</span>
+                            <span id="info-fear" class="info-value">---</span>
+                        </li>
+                        <li>
+                            <span class="info-label">Robots Active</span>
+                            <span id="info-robots" class="info-value">---</span>
+                        </li>
+                        <li>
+                            <span class="info-label">Enemies Present</span>
+                            <span id="info-enemies" class="info-value">---</span>
+                        </li>
+                        <li>
+                            <span class="info-label">Wall Built</span>
+                            <span id="info-wall" class="info-value">---</span>
+                        </li>
+                    </ul>
+                </div>
+                
+                <div class="card legend-card">
+                    <h2>Legend</h2>
+                    <div class="legend-grid">
+                        <div class="legend-item"><span class="color-box bg-base"></span> Base</div>
+                        <div class="legend-item"><span class="color-box bg-wall"></span> Wall</div>
+                        <div class="legend-item"><span class="color-box bg-robot-scout"></span> Scout</div>
+                        <div class="legend-item"><span class="color-box bg-robot-collector"></span> Collector</div>
+                        <div class="legend-item"><span class="color-box bg-robot-army"></span> Army</div>
+                        <div class="legend-item"><span class="color-box bg-enemy"></span> Enemy</div>
+                        <div class="legend-item"><span class="color-box bg-crystal"></span> Crystal</div>
+                        <div class="legend-item"><span class="color-box bg-metal"></span> Metal</div>
+                        <div class="legend-item"><span class="color-box bg-meat"></span> Meat</div>
+                        <div class="legend-item"><span class="color-box bg-energy"></span> Energy</div>
+                        <div class="legend-item"><span class="color-box bg-obstacle"></span> Obstacle</div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script src="/main.js"></script>
+</body>
+</html>
