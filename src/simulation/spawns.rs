@@ -4,11 +4,7 @@ use std::time::Duration;
 
 const FLEE_VISION_RANGE: f64 = 10.0;
 
-fn has_line_of_sight(
-    map: &Vec<Vec<CellType>>,
-    from: (usize, usize),
-    to: (usize, usize),
-) -> bool {
+fn has_line_of_sight(map: &Vec<Vec<CellType>>, from: (usize, usize), to: (usize, usize)) -> bool {
     let mut x0 = from.0 as isize;
     let mut y0 = from.1 as isize;
     let x1 = to.0 as isize;
@@ -382,6 +378,7 @@ pub fn spawn_collector(
     shared_fear: Arc<RwLock<f32>>,
     width: usize,
     height: usize,
+    config: SimulationConfig,
 ) {
     thread::spawn(move || {
         let mut rng = rand::rng();
@@ -493,7 +490,7 @@ pub fn spawn_collector(
                     match cell {
                         CellType::Energy(n) => {
                             if (x, y) == (tx, ty) {
-                                let take = (50u32).min(n);
+                                let take = config.collector_capacity.min(n);
                                 carrying_energy += take;
                                 if sender
                                     .send(Message::ResourceCollected(tx, ty, take))
@@ -526,7 +523,7 @@ pub fn spawn_collector(
                         }
                         CellType::Crystal(n) => {
                             if (x, y) == (tx, ty) {
-                                let take = (50u32).min(n);
+                                let take = config.collector_capacity.min(n);
                                 carrying_crystals += take;
                                 if sender
                                     .send(Message::ResourceCollected(tx, ty, take))
@@ -558,7 +555,7 @@ pub fn spawn_collector(
                         }
                         CellType::Metal(n) => {
                             if (x, y) == (tx, ty) {
-                                let take = (50u32).min(n);
+                                let take = config.collector_capacity.min(n);
                                 carrying_metal += take;
                                 if sender
                                     .send(Message::ResourceCollected(tx, ty, take))
@@ -590,7 +587,7 @@ pub fn spawn_collector(
                         }
                         CellType::Meat(n) => {
                             if (x, y) == (tx, ty) {
-                                let take = (50u32).min(n);
+                                let take = config.collector_capacity.min(n);
                                 carrying_meat += take;
                                 if sender
                                     .send(Message::ResourceCollected(tx, ty, take))

@@ -1,18 +1,24 @@
 use noise::{NoiseFn, Perlin};
 use rand::RngExt;
-use std::fmt::Write as _;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
+pub mod config;
 mod spawns;
+pub mod state;
 
-#[derive(Clone, Copy, PartialEq)]
+use config::SimulationConfig;
+use serde::Serialize;
+use state::GameState;
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EnemyState {
     pub id: usize,
     pub x: usize,
@@ -20,7 +26,7 @@ pub struct EnemyState {
     pub hp: i32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum CellType {
     Empty,
     Obstacle,
@@ -43,14 +49,14 @@ impl CellType {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RobotType {
     Scout,
     Collector,
     Army,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RobotState {
     pub id: usize,
     pub r_type: RobotType,
@@ -61,7 +67,7 @@ pub struct RobotState {
 
 pub const METEORITE_ANIM_FRAMES: u8 = 8;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct MeteoriteAnim {
     pub x: usize,
     pub y: usize,
@@ -83,7 +89,7 @@ const METEORITE_RESOURCE_SPAWN_CHANCE_PERCENT: u8 = 35; // 35% by default
 const METEORITE_RESOURCE_BASE_MIN: u32 = 20;
 const METEORITE_RESOURCE_BASE_MAX: u32 = 100;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct MeteoriteFlight {
     pub x: f32,
     pub y: f32,
@@ -129,6 +135,7 @@ pub enum Message {
 pub struct Simulation {
     pub width: usize,
     pub height: usize,
+    pub config: SimulationConfig,
     pub map: Arc<RwLock<Vec<Vec<CellType>>>>,
     pub robots: Arc<RwLock<Vec<RobotState>>>,
     pub enemies: Arc<RwLock<Vec<EnemyState>>>,
@@ -198,7 +205,7 @@ fn step_towards(
 }
 
 impl Simulation {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub fn new(width: usize, height: usize, config: SimulationConfig) -> Self {
         let mut raw_map = vec![vec![CellType::Empty; width]; height];
         let mut rng = rand::rng();
         let perlin = Perlin::new(rng.random());
@@ -283,7 +290,11 @@ impl Simulation {
             } else {
                 RobotType::Collector
             };
-            let hp = if r_type == RobotType::Scout { 50 } else { 100 };
+            let hp = if r_type == RobotType::Scout {
+                config.robot_hp / 2
+            } else {
+                config.robot_hp
+            };
             robots.write().unwrap().push(RobotState {
                 id: i,
                 r_type,
@@ -317,6 +328,7 @@ impl Simulation {
                     Arc::clone(&shared_fear),
                     width,
                     height,
+                    config,
                 );
             }
         }
@@ -330,7 +342,7 @@ impl Simulation {
                 r_type: RobotType::Army,
                 x: base_x,
                 y: base_y,
-                hp: 10000,
+                hp: config.robot_hp * 100,
             });
             spawns::spawn_army(
                 id,
@@ -355,7 +367,7 @@ impl Simulation {
             let mut rng = rand::rng();
             let mut enemy_id = 0;
             loop {
-                thread::sleep(Duration::from_secs(3));
+                thread::sleep(Duration::from_millis(config.enemy_spawn_speed_ms));
 
                 let valid_spawns = {
                     let map_r = map_spawner.read().unwrap();
@@ -421,12 +433,13 @@ impl Simulation {
         Simulation {
             width,
             height,
+            config,
             map,
             robots,
             enemies,
             fear_factor: 0.5,
             shared_fear,
-            base_hp: 1000,
+            base_hp: config.base_hp,
             collected_crystals: 0,
             collected_meat: 0,
             collected_metal: 0,
@@ -435,6 +448,196 @@ impl Simulation {
             meteorite_anims,
             meteorite_flights,
             wall_built: false,
+            selected_font: &DEFAULT_FONT,
+            receiver,
+            known_resources,
+            _claimed_resources: claimed_resources,
+        }
+    }
+
+    pub fn to_state(&self) -> GameState {
+        GameState {
+            config: self.config,
+            width: self.width,
+            height: self.height,
+            map: self.map.read().unwrap().clone(),
+            robots: self.robots.read().unwrap().clone(),
+            enemies: self.enemies.read().unwrap().clone(),
+            fear_factor: self.fear_factor,
+            base_hp: self.base_hp,
+            collected_crystals: self.collected_crystals,
+            collected_meat: self.collected_meat,
+            collected_metal: self.collected_metal,
+            cheat_mode: self.cheat_mode,
+            meteorite_anims: self.meteorite_anims.read().unwrap().clone(),
+            meteorite_flights: self.meteorite_flights.read().unwrap().clone(),
+            wall_built: self.wall_built,
+            known_resources: self.known_resources.read().unwrap().clone(),
+            claimed_resources: self._claimed_resources.read().unwrap().clone(),
+        }
+    }
+
+    pub fn from_state(state: GameState) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let map = Arc::new(RwLock::new(state.map));
+        let known_resources: Arc<RwLock<Vec<(usize, usize)>>> =
+            Arc::new(RwLock::new(state.known_resources));
+        let claimed_resources: Arc<RwLock<HashSet<(usize, usize)>>> =
+            Arc::new(RwLock::new(state.claimed_resources));
+        let robots = Arc::new(RwLock::new(state.robots.clone()));
+        let enemies = Arc::new(RwLock::new(state.enemies.clone()));
+        let meteorite_anims = Arc::new(RwLock::new(state.meteorite_anims));
+        let meteorite_flights = Arc::new(RwLock::new(state.meteorite_flights));
+        let shared_fear = Arc::new(RwLock::new(state.fear_factor));
+
+        for robot in state.robots.iter() {
+            let sender_clone = sender.clone();
+            match robot.r_type {
+                RobotType::Scout => {
+                    spawns::spawn_scout(
+                        robot.id,
+                        robot.x,
+                        robot.y,
+                        sender_clone,
+                        Arc::clone(&map),
+                        Arc::clone(&enemies),
+                        state.width,
+                        state.height,
+                    );
+                }
+                RobotType::Collector => {
+                    spawns::spawn_collector(
+                        robot.id,
+                        robot.x,
+                        robot.y,
+                        sender_clone,
+                        Arc::clone(&map),
+                        Arc::clone(&enemies),
+                        Arc::clone(&known_resources),
+                        Arc::clone(&claimed_resources),
+                        Arc::clone(&shared_fear),
+                        state.width,
+                        state.height,
+                        state.config,
+                    );
+                }
+                RobotType::Army => {
+                    spawns::spawn_army(
+                        robot.id,
+                        robot.x,
+                        robot.y,
+                        sender_clone,
+                        Arc::clone(&map),
+                        Arc::clone(&enemies),
+                        Arc::clone(&robots),
+                        state.width,
+                        state.height,
+                    );
+                }
+            }
+        }
+
+        for enemy in state.enemies.iter() {
+            spawns::spawn_enemy(
+                enemy.id,
+                enemy.x,
+                enemy.y,
+                sender.clone(),
+                Arc::clone(&map),
+                Arc::clone(&robots),
+                state.width,
+                state.height,
+            );
+        }
+
+        let sender_spawner = sender.clone();
+        let map_spawner = Arc::clone(&map);
+        let robots_spawner = Arc::clone(&robots);
+        let w = state.width;
+        let h = state.height;
+        let config_clone = state.config;
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            let mut enemy_id = {
+                let en = robots_spawner.read().unwrap();
+                0
+            };
+            loop {
+                thread::sleep(Duration::from_millis(config_clone.enemy_spawn_speed_ms));
+                let valid_spawns = {
+                    let map_r = map_spawner.read().unwrap();
+                    let mut spots = Vec::new();
+                    for x in 0..w {
+                        if map_r[0][x].is_passable() {
+                            spots.push((x, 0));
+                        }
+                        if map_r[h - 1][x].is_passable() {
+                            spots.push((x, h - 1));
+                        }
+                    }
+                    for y in 1..h - 1 {
+                        if map_r[y][0].is_passable() {
+                            spots.push((0, y));
+                        }
+                        if map_r[y][w - 1].is_passable() {
+                            spots.push((w - 1, y));
+                        }
+                    }
+                    spots
+                };
+                if valid_spawns.is_empty() {
+                    continue;
+                }
+                let (ex, ey) = valid_spawns[rng.random_range(0..valid_spawns.len())];
+                let current_enemy_id = enemy_id;
+                enemy_id += 1;
+                let _ = sender_spawner.send(Message::EnemySpawned(current_enemy_id, ex, ey));
+                spawns::spawn_enemy(
+                    current_enemy_id,
+                    ex,
+                    ey,
+                    sender_spawner.clone(),
+                    Arc::clone(&map_spawner),
+                    Arc::clone(&robots_spawner),
+                    w,
+                    h,
+                );
+            }
+        });
+
+        let sender_meteorite = sender.clone();
+        let width_meteorite = state.width;
+        let height_meteorite = state.height;
+        thread::spawn(move || {
+            let mut rng = rand::rng();
+            loop {
+                thread::sleep(Duration::from_secs(rng.random_range(10..30)));
+                let tx = rng.random_range(0..width_meteorite);
+                let ty = rng.random_range(0..height_meteorite);
+                let sx = rng.random_range(0..width_meteorite);
+                let sy = 0usize;
+                let _ = sender_meteorite.send(Message::MeteoriteIncoming(sx, sy, tx, ty));
+            }
+        });
+
+        Simulation {
+            width: state.width,
+            height: state.height,
+            config: state.config,
+            map,
+            robots,
+            enemies,
+            fear_factor: state.fear_factor,
+            shared_fear,
+            base_hp: state.base_hp,
+            collected_crystals: state.collected_crystals,
+            collected_meat: state.collected_meat,
+            collected_metal: state.collected_metal,
+            sender,
+            cheat_mode: state.cheat_mode,
+            meteorite_anims,
+            meteorite_flights,
+            wall_built: state.wall_built,
             selected_font: &DEFAULT_FONT,
             receiver,
             known_resources,
@@ -674,9 +877,12 @@ impl Simulation {
         if target_army_units > current_army_units {
             let mut spawn_count = target_army_units - current_army_units;
 
-            while spawn_count > 0 && self.collected_metal >= 100 && self.collected_meat >= 10 {
-                self.collected_metal -= 100;
-                self.collected_meat -= 10;
+            while spawn_count > 0
+                && self.collected_metal >= self.config.army_cost_metal
+                && self.collected_meat >= self.config.army_cost_meat
+            {
+                self.collected_metal -= self.config.army_cost_metal;
+                self.collected_meat -= self.config.army_cost_meat;
 
                 self.base_hp = self.base_hp.saturating_add(500);
 
@@ -693,7 +899,7 @@ impl Simulation {
                     r_type: RobotType::Army,
                     x: base_x,
                     y: base_y,
-                    hp: 150,
+                    hp: self.config.robot_hp * 100,
                 });
 
                 spawns::spawn_army(
@@ -747,7 +953,7 @@ impl Simulation {
                 r_type: RobotType::Collector,
                 x: base_x,
                 y: base_y,
-                hp: 100,
+                hp: self.config.robot_hp,
             });
             spawns::spawn_collector(
                 next_id,
@@ -761,6 +967,7 @@ impl Simulation {
                 Arc::clone(&self.shared_fear),
                 self.width,
                 self.height,
+                self.config,
             );
         }
 
@@ -777,7 +984,7 @@ impl Simulation {
                 r_type: RobotType::Scout,
                 x: base_x,
                 y: base_y,
-                hp: 50,
+                hp: self.config.robot_hp / 2,
             });
             spawns::spawn_scout(
                 next_id,
@@ -875,10 +1082,12 @@ impl Simulation {
                     self.collected_meat = self.collected_meat.saturating_add(meat);
                 }
                 Message::EnemySpawned(id, x, y) => {
-                    self.enemies
-                        .write()
-                        .unwrap()
-                        .push(EnemyState { id, x, y, hp: 30 });
+                    self.enemies.write().unwrap().push(EnemyState {
+                        id,
+                        x,
+                        y,
+                        hp: self.config.enemy_hp,
+                    });
                 }
                 Message::EnemyMoved(id, x, y) => {
                     let mut en = self.enemies.write().unwrap();
